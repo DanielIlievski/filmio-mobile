@@ -1,0 +1,4 @@
+interface:
+  display_name: "Failure-First Engineering"
+  short_description: "Design fallible behavior before success paths"
+  default_prompt: "Use $failure-first-engineering to implement this fallible operation by covering failure behavior before the happy path."
