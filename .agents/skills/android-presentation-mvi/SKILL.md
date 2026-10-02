@@ -25,9 +25,9 @@ A root composable can inject the ViewModel, collect state/events, and connect na
 
 ## Assignment behavior
 
-- Movie list state should distinguish initial loading, content, empty, page loading, page failure, and end of list. Trigger the next page near the end without duplicate requests.
+- Movie list UI should render Paging 3 load states: initial loading, cached content, true empty, refresh/append loading, failure, retry, and end of list. Let Paging trigger subsequent pages instead of maintaining a parallel manual paginator.
 - Details state should use a stable movie ID, show core and extended information when available, and represent loading/error/retry clearly.
-- Search state should include query, selected content type (movie or series), results, and loading/error/empty states. Use a cancelable Flow operator or equivalent to control query-triggered request rate and prevent stale results. Choose and document throttle/debounce semantics and the interval during implementation; the PDF does not specify them.
+- Search state should include query, selected content type (movie or series), cached results, and loading/error/empty/offline states. Use a cancelable Flow operator or equivalent to control query-triggered request rate and prevent stale results. Choose and document throttle/debounce semantics and the interval during implementation; the PDF does not specify them.
 - Navigation remains at the app/host boundary. Pass stable IDs or route arguments, not data-layer DTOs or full mutable screen models.
 - Compose UI state should survive recomposition. Use `SavedStateHandle` for essential inputs such as selected ID, search query, or content type when process restoration matters; avoid saving an entire response payload.
 - Use Coil or another justified image loader for film artwork in presentation; show appropriate placeholders and error content.

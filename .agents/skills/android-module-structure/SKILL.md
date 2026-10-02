@@ -5,7 +5,7 @@ description: "Module layout and dependency rules for the Filmio Android assignme
 
 # Android Module Structure
 
-The assignment in `docs/Android Technical Assignment-Senior.md` is the primary source of truth. Build an Android-only, single-activity, Compose app. Use Clean Architecture with MVI and unidirectional data flow (UDF), which satisfies the PDF's MVVM-or-similarly-clean requirement. Keep modularization proportional to three screen flows.
+The original assignment PDF is the primary source of truth; `docs/Android Technical Assignment-Senior.md` is a convenience transcription. Build an Android-only, single-activity, Compose app. Use Clean Architecture with MVI and unidirectional data flow (UDF), which satisfies the PDF's MVVM-or-similarly-clean requirement. Keep modularization proportional to the required flows and user-selected offline/favorites scope.
 
 ## Suggested shape
 
@@ -20,13 +20,13 @@ The assignment in `docs/Android Technical Assignment-Senior.md` is the primary s
 :feature:<name>:presentation ViewModel, Screen, State, Action, Event
 ```
 
-Group screens by cohesive feature, such as movie browsing and search; do not automatically create one triple of modules per screen. Create a core module only for genuinely shared functionality. A feature-specific DTO, repository, or UI component stays with that feature. A shared Room database module is optional only if persistence is implemented. Gradle convention plugins are optional when they reduce repeated build configuration; they are not required for this assignment.
+Group the movie list, detail, movie/series search, and favorites into a cohesive `:feature:catalog:{domain,data,presentation}`: they share media identity and one Room source of truth. Do not create one trio per screen. Catalog data owns its Room database, TMDB endpoints, DTOs, entities, DAOs, Paging mediators, and repositories. Create core modules only for actual reuse; Gradle convention plugins are optional when they reduce repeated configuration.
 
 ## Dependency direction
 
 | Module | Allowed dependencies | Forbidden dependencies |
 |---|---|---|
-| Feature `domain` | Kotlin and approved pure `core:domain` abstractions | Android UI, Retrofit/OkHttp, JSON DTOs, persistence implementations, any other feature implementation or domain |
+| Feature `domain` | Kotlin, approved pure `core:domain` abstractions, and Paging's non-UI `PagingData` for a paged repository contract if needed | Android UI, Retrofit/OkHttp, JSON DTOs, Room entities/DAOs, any other feature implementation or domain |
 | Feature `data` | Its own feature `domain`; approved `core:domain` and `core:data` infrastructure | Other feature data/presentation implementations; exposing DTOs/entities/framework types to domain or presentation |
 | Feature `presentation` | Its own feature `domain`; approved `core:presentation`/design system/UI libraries | Any feature data implementation; another feature presentation or data implementation |
 | `:app` | Feature presentation entry points, DI modules, shared infrastructure needed for composition | Business logic, DTO mapping, or direct screen data access |
@@ -46,7 +46,7 @@ The exception for cross-feature domain access is an explicitly justified shared 
 - Required by PDF: Kotlin, Gradle, Jetpack Compose presentation, one activity, Retrofit for TMDB, network error handling, and unit tests for domain, data, and ViewModels.
 - Allowed by PDF: Compose Navigation or Fragment-based navigation; Koin or Dagger/Hilt. For this Compose-first app, prefer Compose Navigation and retain Koin from `start-project` unless later evidence makes another choice better.
 - Supporting choices: OkHttp and a Retrofit JSON converter such as Moshi; Coil for poster/backdrop loading. These are implementation recommendations, not technologies named as mandatory by the PDF.
-- Optional scope: Room/DataStore, local favorites, offline cache, and associated database modules. Add only if the optional feature is chosen.
+- User-selected optional scope: Room-backed offline-first catalog and local favorites, plus Paging 3 for the infinite list. DataStore remains conditional on a concrete small preference. See `android-offline-first`.
 - Keep API credentials out of committed source and route them to data configuration during a later setup phase.
 
 Do not copy Chirp's Kotlin Multiplatform/iOS targets, Ktor stack, WebSocket/auth infrastructure, or its full build-logic module graph. Its useful reference is inward feature dependencies, small shared core modules, and app-level composition.

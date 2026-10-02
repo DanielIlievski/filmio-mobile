@@ -14,14 +14,14 @@ The assignment explicitly requires unit tests for domain, data, and ViewModels. 
 
 ## Data
 
-- Test TMDB DTO-to-domain mapping, absent/nullable fields, pagination metadata, and repository behavior.
+- Test TMDB DTO-to-entity-to-domain mapping, absent/nullable fields, Room transactions, Paging keys/end markers, and repository behavior.
 - Use a controllable HTTP server such as MockWebServer for Retrofit integration at the data boundary. Cover representative success, HTTP failure, connection/timeout, malformed response, and cancellation behavior. Verify that raw DTOs and exceptions do not escape the repository contract.
-- Test optional persistence only if favorites or offline storage are actually implemented.
+- Test the selected Room offline contract: cached relaunch, uncached offline state, favorite writes without network, favorites surviving refresh, query/media-type isolation, mediator retry, and migration preservation. Use a real Room database for transaction-sensitive behavior; use Paging test utilities where helpful.
 
 ## ViewModels
 
 - Inject fake feature-domain repositories. Use `kotlinx-coroutines-test` to control timing, dispatchers, and Flow collection; no real TMDB calls in ViewModel tests.
-- Verify state and one-time events for initial loading, content, empty results, pagination/end-of-list, page retry, detail load/error, and navigation.
+- Verify state and one-time events for initial loading, cached content, true empty versus uncached offline results, Paging load-state retry, detail load/error, favorites, and navigation.
 - Verify search query changes, movie/series selection, chosen throttle/debounce interval, cancellation, and stale-response behavior. Use virtual time rather than wall-clock sleeps.
 - Keep `SavedStateHandle` tests focused on inputs that must survive restoration.
 

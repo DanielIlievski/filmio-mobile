@@ -1,19 +1,19 @@
 ---
 name: android-data-layer
-description: "Data-layer guidance for the Filmio Android assignment: Retrofit and OkHttp TMDB access, DTO mapping, domain repositories, pagination, optional persistence, and data tests. Use when designing or reviewing API services, data sources, repositories, mappers, or storage."
+description: "Data-layer guidance for Filmio's Retrofit/OkHttp TMDB access, Room source of truth, Paging 3, mapping, local favorites, and data tests. Use when designing or reviewing services, repositories, mappers, pagination, or storage."
 ---
 
 # Android Data Layer
 
-Read `docs/Android Technical Assignment-Senior.md` before making implementation choices. The assignment requires Retrofit for TMDB API calls; its favorites and offline storage are optional.
+Read the assignment PDF before making implementation choices. It requires Retrofit for TMDB API calls and lists favorites/offline storage as optional; the user chose to implement both. Follow `android-offline-first` for the selected Room/Paging design.
 
 ## Boundaries
 
 - Put domain models and the contracts needed by presentation in the owning feature's `domain` module. Domain contains no Retrofit, OkHttp, JSON, database, or Android UI types.
-- Put Retrofit service interfaces, request/response DTOs, JSON configuration, remote data sources, data mappers, and repository implementations in `data` or approved shared infrastructure. Map DTOs to domain models before returning through a domain contract.
-- A repository can be the domain contract for one remote source. Do not require multiple sources merely to justify the name. Add local and remote data sources when coordinating them actually helps.
+- Put Retrofit services/DTOs, Room entities/DAOs, data mappers, Paging mediators, and repository implementations in `data` or justified shared infrastructure. Map DTOs to entities and entities to domain models before crossing a domain contract.
+- For catalog data, the repository coordinates remote and local sources: Room is the canonical read source, while Retrofit refreshes it. Do not return direct Retrofit results to the UI.
 - Data implementations depend inward on their own feature domain. Presentation depends on domain contracts and never imports data implementations.
-- Keep TMDB response shapes, pagination fields, image paths, and nullable values in data. Expose only the fields and error semantics useful to the feature domain.
+- Keep TMDB response shapes, remote page keys, image paths, Room entities, and nullable wire values in data. Expose only fields, paging contracts, and error semantics useful to domain/presentation.
 
 ## Retrofit stack
 
@@ -26,14 +26,14 @@ Read `docs/Android Technical Assignment-Senior.md` before making implementation 
 
 ## Assignment flows
 
-- Main list: support incremental page loading for infinite scroll. Preserve the API's end-of-list signal, avoid duplicate concurrent requests, and make retry of a failed page possible.
+- Main list: use AndroidX Paging 3 with a Room `PagingSource` and Retrofit-backed `RemoteMediator`. Preserve scoped remote keys and the API's end-of-list signal; use Paging load states and retry rather than a second manual paginator.
 - Details: load the selected movie's extended information by a stable ID. Include supported ratings, votes, and author-related data where available; model absent fields safely.
-- Search: represent the user's movie-versus-series selection explicitly. Make request rate limiting controllable, choose and document throttle/debounce semantics during implementation, and prevent stale responses from replacing newer results. Keep the timing policy in presentation or a meaningful domain operation, not in the Retrofit service.
+- Search: represent movie-versus-series selection explicitly; cache result membership by query and type. Make request rate limiting controllable, choose and document throttle/debounce semantics during implementation, and prevent stale responses from replacing newer results. Keep timing in presentation or a meaningful domain operation, not Retrofit.
 - Fetch images with an image loader from presentation. Data can expose a validated image URL or path, but must not depend on Compose or Coil.
 
 ## Persistence
 
-The PDF does not require a database, favorites, token storage, or offline mode. Introduce Room or DataStore only for a chosen optional feature with a clear persistence need. If offline mode is implemented, define cache and source-of-truth behavior deliberately and keep entities and DAOs in data or a dedicated database module. Do not add auth refresh or token storage flows without an actual requirement.
+The user chose Room-backed offline-first content and local favorites even though the PDF marks them optional. Keep previously loaded list/details/search content and favorites usable offline; Room is the single read source. Preserve favorites and unrelated cached content across refresh. Use DataStore only if a concrete small preference is needed. Do not add TMDB favorite sync, an outbox, auth refresh, or token storage without an actual requirement. See `android-offline-first` for cache keys, transactions, freshness, and offline failure semantics.
 
 ## UseCases
 

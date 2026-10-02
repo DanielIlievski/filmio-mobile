@@ -5,7 +5,7 @@ description: "Typed errors and Retrofit failure mapping for the Filmio Android a
 
 # Android Error Handling
 
-The assignment requires proper handling of TMDB network errors. Model expected failures explicitly at the data boundary and give the user a useful loading, empty, error, and retry experience.
+The assignment requires proper handling of TMDB network errors. With the selected Room source of truth, distinguish cached content with a refresh failure, a truly empty result, and an uncached offline request. Model expected failures at the data boundary and give the user useful loading, error, and retry states.
 
 ## Shared result types
 
@@ -36,5 +36,5 @@ Simple `map`, `onSuccess`, and `onFailure` helpers are optional if they make rep
 
 - Represent durable loading and retry state in `<Feature>State`. A transient snackbar or navigation response belongs in `<Feature>Event`.
 - Map domain errors to user-facing text in presentation or approved shared UI code. Keep resource IDs and Compose types out of domain.
-- Support a retry action for failed list pages, details, and search requests where retry is meaningful. Clear obsolete errors on a new request, and prevent an older response from overwriting the latest search state.
+- Support Paging load-state retry for failed list refresh/append while preserving cached rows; support detail/search retry where meaningful. Show an uncached offline request as unavailable rather than empty. Clear obsolete errors on a new request, and prevent an older response from overwriting the latest search state.
 - Unit-test representative success, HTTP failure, offline/timeout, malformed-response, and cancellation paths in data, plus ViewModel state/event handling of those outcomes.
