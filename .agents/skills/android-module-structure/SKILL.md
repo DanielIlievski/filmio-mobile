@@ -20,7 +20,7 @@ The original assignment PDF is the primary source of truth; `docs/Android Techni
 :feature:<name>:presentation ViewModel, Screen, State, Action, Event
 ```
 
-Group the movie list, detail, movie/series search, and favorites into a cohesive `:feature:catalog:{domain,data,presentation}`: they share media identity and one Room source of truth. Do not create one trio per screen. Catalog data owns its Room database, TMDB endpoints, DTOs, entities, DAOs, Paging mediators, and repositories. Create core modules only for actual reuse; Gradle convention plugins are optional when they reduce repeated configuration.
+Group the movie list, detail, movie/series search, and favorites into a cohesive `:feature:catalog:{domain,data,presentation}`: they share media identity and one Room source of truth. Do not create one trio per screen. Catalog data owns its Room database, TMDB endpoints, DTOs, entities, DAOs, Paging mediators, and repositories. Place the shared Retrofit result boundary in `:core:data` when it is implemented, even if catalog is initially its only caller. Create other core modules only for a clear shared responsibility; Gradle convention plugins are optional when they reduce repeated configuration.
 
 ## Dependency direction
 
@@ -49,4 +49,4 @@ The exception for cross-feature domain access is an explicitly justified shared 
 - User-selected optional scope: Room-backed offline-first catalog and local favorites, plus Paging 3 for the infinite list. DataStore remains conditional on a concrete small preference. See `android-offline-first`.
 - Keep API credentials out of committed source and route them to data configuration during a later setup phase.
 
-Do not copy Chirp's Kotlin Multiplatform/iOS targets, Ktor stack, WebSocket/auth infrastructure, or its full build-logic module graph. Its useful reference is inward feature dependencies, small shared core modules, and app-level composition.
+Keep this project Android-only with Retrofit for networking. Add WebSocket/auth infrastructure or a full build-logic module graph only if a concrete Filmio requirement calls for it. Keep feature dependencies directed inward, shared core modules focused, and application composition at the app level.

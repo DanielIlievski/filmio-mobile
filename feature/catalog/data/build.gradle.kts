@@ -28,6 +28,7 @@ room {
 dependencies {
     // Feature domain contract
     implementation(project(":feature:catalog:domain"))
+    implementation(project(":core:data"))
 
     // Dependency injection
     implementation(platform(libs.koin.bom))

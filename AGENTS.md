@@ -22,22 +22,22 @@ These are intended choices for implementation, not claims that their dependencie
 | Coil | Poster/backdrop image loading in presentation. |
 | JUnit, `kotlinx-coroutines-test`, MockWebServer | Domain/ViewModel unit tests and data-boundary HTTP tests. Compose UI Test covers selected user interactions. |
 
-Room is selected for this project's offline-first behavior. DataStore may be added for a concrete small preference, not catalog/favorites/page-key storage. Do not carry over Ktor, Kotlin Multiplatform/iOS, or unrelated starter libraries.
+Room is selected for this project's offline-first behavior. DataStore may be added for a concrete small preference, not catalog/favorites/page-key storage. This is an Android-only project with Retrofit for HTTP; add other libraries only for concrete Filmio requirements.
 
 ## Architecture and modules
 
-Use Clean Architecture, MVI, unidirectional data flow (UDF), and a proportionate multi-module structure. Chirp is a reference for inward dependencies and app-level composition, not a template to copy. Build modules as functionality is implemented:
+Use Clean Architecture, MVI, unidirectional data flow (UDF), and a proportionate multi-module structure. Keep dependencies directed inward and compose implementations at the app level. Build modules as functionality is implemented:
 
 | Module | Responsibility |
 | --- | --- |
 | `:app` | Single activity, navigation host, application configuration, and Koin module assembly. No feature business logic or DTO mapping. |
 | `:feature:catalog:domain` / `:data` / `:presentation` | One cohesive film/series catalog feature covering movie list, detail, search, and local favorites. Domain owns models/contracts; data owns TMDB, Room, Paging mediators, and repository implementations; presentation owns Compose screens and ViewModels. |
 | `:core:domain` | Pure-Kotlin shared `Result`, `Error`, and `DataError` contracts. Add other contracts only for genuine reuse. |
-| `:core:data` | Shared data infrastructure only if genuine reuse later appears; catalog-specific Retrofit and Room setup can remain in catalog data. |
+| `:core:data` | Kotlin/JVM Retrofit call result handling through `safeCall`. Catalog-specific services, configuration, and future Room setup remain in catalog data. |
 | `:core:presentation` | Shared Android presentation utilities, beginning with `UiText` for dynamic and string-resource text. |
 | `:core:designsystem` | Reusable theme/components only when actual reuse warrants them. |
 
-Do not create one domain/data/presentation trio per screen: these flows share catalog identity, caching, and favorites. Do not create empty core modules or convention plugins for hypothetical reuse. Gradle includes `:app`, the catalog layer modules, `:core:domain`, and `:core:presentation`; add further modules only as implementation needs them. Extract other shared behavior only after a concrete cross-feature need appears.
+Do not create one domain/data/presentation trio per screen: these flows share catalog identity, caching, and favorites. Do not create empty core modules or convention plugins for hypothetical reuse. Gradle includes `:app`, the catalog layer modules, `:core:domain`, `:core:data`, and `:core:presentation`; catalog data depends on `:core:data`. Extract other shared behavior only after a concrete cross-feature need appears.
 
 `UiText` lives in `:core:presentation` and supports dynamic strings and Android string resources with optional format arguments. Resolve it in Compose with `asString()` or from a suspending caller with `asStringAsync(context)`; the Android `Context` is explicit outside composition.
 
@@ -68,6 +68,8 @@ UseCases are optional. A ViewModel may call its feature-domain repository contra
 ## Networking and error handling
 
 Follow `.agents/skills/android-data-layer/SKILL.md`, `.agents/skills/android-error-handling/SKILL.md`, and `.agents/skills/android-offline-first/SKILL.md`. Use typed `suspend` Retrofit services in feature data, a shared OkHttp client where useful, and Moshi for DTO conversion. Supply TMDB credentials through non-committed configuration; never hardcode or log them. Map DTOs to Room entities, then domain models at the data boundary. Repositories read canonical data from Room; network refresh writes Room. The paged list uses a Room `PagingSource` and Retrofit-backed `RemoteMediator` with scoped remote keys and transactional page updates. Load details by stable ID, cache their extended fields, and model absent fields safely. Keep local favorites in separate durable state so refresh cannot erase them. Cached search results are scoped by query and media type; unseen searches cannot be completed offline.
+
+`:core:data` currently provides `safeCall` for a typed `suspend` Retrofit invocation. It returns `Result<T, DataError.Network>` using the shared `:core:domain` contract, classifies HTTP, transport, timeout, Moshi decoding failures, and Retrofit's null-body failure, and propagates cancellation and unexpected defects. Catalog endpoints and repositories have not been implemented yet. When future catalog list, detail, and search callers use this boundary, write fetched data to Room only after `Result.Success`; on `Result.Error`, keep cached rows and prior transactions intact and pass the typed failure to Paging or screen retry state. The wrapper itself does not retry or write to Room.
 
 Translate HTTP, connectivity/timeout, rate-limit, and parsing failures centrally at the data boundary into a small domain-meaningful error vocabulary where useful. No `HttpException`, Retrofit `Response`, raw exception text, DTO, or HTTP status handling in presentation. Rethrow coroutine cancellation. Keep diagnostic logs free of credentials. UI state must distinguish uncached offline/unavailable, true empty, loading, cached/stale content, and refresh/append failure. Paging failures must keep cached rows visible and offer retry. Details and search should also offer meaningful retry. Use state for recoverable failures and events only for transient feedback.
 
