@@ -34,9 +34,12 @@ Use Clean Architecture, MVI, unidirectional data flow (UDF), and a proportionate
 | `:feature:catalog:domain` / `:data` / `:presentation` | One cohesive film/series catalog feature covering movie list, detail, search, and local favorites. Domain owns models/contracts; data owns TMDB, Room, Paging mediators, and repository implementations; presentation owns Compose screens and ViewModels. |
 | `:core:domain` | Pure-Kotlin shared `Result`, `Error`, and `DataError` contracts. Add other contracts only for genuine reuse. |
 | `:core:data` | Shared data infrastructure only if genuine reuse later appears; catalog-specific Retrofit and Room setup can remain in catalog data. |
-| `:core:presentation` / `:core:designsystem` | Shared UI utilities or reusable theme/components only when actual reuse warrants them. |
+| `:core:presentation` | Shared Android presentation utilities, beginning with `UiText` for dynamic and string-resource text. |
+| `:core:designsystem` | Reusable theme/components only when actual reuse warrants them. |
 
-Do not create one domain/data/presentation trio per screen: these flows share catalog identity, caching, and favorites. Do not create empty core modules or convention plugins for hypothetical reuse. Gradle currently includes `:app`, the catalog layer modules, and `:core:domain`; add further modules only as implementation needs them. Shared behavior should be extracted only after a concrete cross-feature need appears.
+Do not create one domain/data/presentation trio per screen: these flows share catalog identity, caching, and favorites. Do not create empty core modules or convention plugins for hypothetical reuse. Gradle includes `:app`, the catalog layer modules, `:core:domain`, and `:core:presentation`; add further modules only as implementation needs them. Extract other shared behavior only after a concrete cross-feature need appears.
+
+`UiText` lives in `:core:presentation` and supports dynamic strings and Android string resources with optional format arguments. Resolve it in Compose with `asString()` or from a suspending caller with `asStringAsync(context)`; the Android `Context` is explicit outside composition.
 
 ## Module dependency rules
 

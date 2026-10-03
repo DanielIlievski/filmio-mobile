@@ -27,6 +27,7 @@ android {
 dependencies {
     // Feature domain contract
     implementation(project(":feature:catalog:domain"))
+    implementation(project(":core:presentation"))
 
     // Compose UI
     implementation(platform(libs.androidx.compose.bom))

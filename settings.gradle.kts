@@ -25,6 +25,7 @@ dependencyResolutionManagement {
 rootProject.name = "Filmio"
 include(":app")
 include(":core:domain")
+include(":core:presentation")
 include(":feature:catalog:domain")
 include(":feature:catalog:data")
 include(":feature:catalog:presentation")
