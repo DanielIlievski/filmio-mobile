@@ -32,11 +32,11 @@ Use Clean Architecture, MVI, unidirectional data flow (UDF), and a proportionate
 | --- | --- |
 | `:app` | Single activity, navigation host, application configuration, and Koin module assembly. No feature business logic or DTO mapping. |
 | `:feature:catalog:domain` / `:data` / `:presentation` | One cohesive film/series catalog feature covering movie list, detail, search, and local favorites. Domain owns models/contracts; data owns TMDB, Room, Paging mediators, and repository implementations; presentation owns Compose screens and ViewModels. |
-| `:core:domain` | Only genuinely shared pure-Kotlin contracts or errors, if a separate feature later needs them. |
+| `:core:domain` | Pure-Kotlin shared `Result`, `Error`, and `DataError` contracts. Add other contracts only for genuine reuse. |
 | `:core:data` | Shared data infrastructure only if genuine reuse later appears; catalog-specific Retrofit and Room setup can remain in catalog data. |
 | `:core:presentation` / `:core:designsystem` | Shared UI utilities or reusable theme/components only when actual reuse warrants them. |
 
-Do not create one domain/data/presentation trio per screen: these flows share catalog identity, caching, and favorites. Do not create empty core modules or convention plugins for hypothetical reuse. The current `:app` starter remains the actual structure until a later implementation phase changes Gradle. Shared behavior should be extracted only after a concrete cross-feature need appears.
+Do not create one domain/data/presentation trio per screen: these flows share catalog identity, caching, and favorites. Do not create empty core modules or convention plugins for hypothetical reuse. Gradle currently includes `:app`, the catalog layer modules, and `:core:domain`; add further modules only as implementation needs them. Shared behavior should be extracted only after a concrete cross-feature need appears.
 
 ## Module dependency rules
 
