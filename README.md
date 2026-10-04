@@ -92,9 +92,10 @@ Relaunch keeps the stored catalog and starts a new remote sequence at 1; cache s
 never determines a TMDB page number. Mapping preserves supplied whitespace, blanks,
 nulls, and numeric zero. Missing token does not add a credential-presence gate.
 
-The list and detail screens use text. Details include ratings/votes and selected runtime,
+The list uses flat poster-and-summary rows, ratings, and the green Filmio light/dark theme.
+Missing or failed posters retain a neutral 2:3 placeholder. Details use text and include ratings/votes and selected runtime,
 release, genre, company, collection, and other metadata with unknown-value fallbacks.
-Posters, credits/review authors, movie/series search with controllable request rate, and local favorite UI/operations
+Detail artwork, credits/review authors, movie/series search with controllable request rate, and local favorite UI/operations
 remain assignment work. Background synchronization and list freshness are outside
 this change. Stored image paths alone do not guarantee offline artwork.
 

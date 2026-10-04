@@ -1,14 +1,15 @@
 <resources>
-    <string name="stored_movies">Stored movies</string>
+    <string name="stored_movies">All movies</string>
     <string name="refresh">Refresh</string>
     <string name="retry">Retry</string>
     <string name="refreshing_movies">Refreshing movies…</string>
     <string name="loading_more_movies">Loading more movies…</string>
     <string name="loading_movies">Loading movies…</string>
     <string name="no_description">No description available.</string>
-    <string name="empty_movies">No stored movies.</string>
+    <string name="empty_movies">There are no movies here yet. Refresh to check again.</string>
     <string name="error_configuration">Configure the TMDB Read Access Token in your private configuration and rebuild.</string>
     <string name="error_offline">No connection. Stored movies remain available.</string>
+    <string name="error_offline_initial">You’re offline. Connect and try again.</string>
     <string name="error_timeout">The request timed out.</string>
     <string name="error_rate_limit">Too many requests.</string>
     <string name="error_malformed">The service returned an unreadable response.</string>
@@ -42,4 +43,16 @@
     <string name="collection_id">Collection ID</string>
     <string name="genres">Genres</string>
     <string name="production_companies">Production companies</string>
+    <string name="filmio_wordmark">FILMIO</string>
+    <string name="discover">Discover</string>
+    <string name="discover_tagline">Find your next great story.</string>
+    <string name="no_poster">No poster</string>
+    <string name="not_rated">Not rated</string>
+    <string name="movie_score">%1$.1f / 10</string>
+    <string name="movie_rating_description">Rated %1$.1f out of 10</string>
+    <string name="open_movie_details">Open movie details</string>
+    <string name="empty_movies_title">Your next story is waiting</string>
+    <string name="could_not_load_movies">Couldn’t load movies</string>
+    <string name="could_not_refresh_movies">Couldn’t refresh. Your saved catalog is still available.</string>
+    <string name="could_not_load_more_movies">Couldn’t load more movies.</string>
 </resources>

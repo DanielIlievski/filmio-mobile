@@ -10,4 +10,5 @@ data class Movie(
     val originalTitle: String? = null,
     val originalLanguage: String? = null,
     val details: MovieDetails? = null,
+    val posterUrl: String? = null,
 )

@@ -28,7 +28,8 @@ class MovieDetailsMappingTest {
         assertEquals(Movie(7, " Title ", " Overview ", "2024-02-29", 0.0, 0, " Original ", " en ",
             MovieDetails(0, " Tagline ", " Released ", 0, 5_000_000_000, " https://example.com ",
                 " tt7 ", 8, " Collection ", listOf(MovieGenre(1, " Genre ")),
-                listOf(MovieProductionCompany(2, " Company ")))), snapshot.toDomain())
+                listOf(MovieProductionCompany(2, " Company "))),
+            posterUrl = "https://image.tmdb.org/t/p/w500/poster"), snapshot.toDomain())
         assertNull(snapshot.movie.toDomain().details)
     }
 

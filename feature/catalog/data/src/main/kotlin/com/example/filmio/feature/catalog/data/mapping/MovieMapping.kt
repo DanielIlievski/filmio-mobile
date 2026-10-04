@@ -30,5 +30,7 @@ internal fun MovieEntity.toDomain(): Movie {
         voteCount = voteCount,
         originalTitle = originalTitle,
         originalLanguage = originalLanguage,
+        posterUrl = posterPath?.trim()?.takeIf { it.startsWith("/") && it.length > 1 }
+            ?.let { "https://image.tmdb.org/t/p/w500$it" },
     )
 }

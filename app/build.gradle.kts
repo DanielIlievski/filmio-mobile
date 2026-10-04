@@ -71,6 +71,7 @@ dependencies {
     implementation(project(":feature:catalog:data"))
     implementation(project(":feature:catalog:presentation"))
     implementation(project(":feature:catalog:database"))
+    implementation(project(":core:presentation"))
 
     // AndroidX and Compose
     implementation(platform(libs.androidx.compose.bom))
