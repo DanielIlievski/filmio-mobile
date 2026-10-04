@@ -12,7 +12,6 @@ android {
 
     defaultConfig {
         minSdk = 29
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -34,10 +33,4 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.paging)
     ksp(libs.androidx.room.compiler)
-
-    androidTestImplementation(libs.androidx.junit)
-    // Match the runner already resolved by the app's Compose test runtime.
-    androidTestImplementation("androidx.test:runner:1.5.0")
-    androidTestImplementation(libs.androidx.room.testing)
-    androidTestImplementation(libs.kotlinx.coroutines.test)
 }

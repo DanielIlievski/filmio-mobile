@@ -10,7 +10,6 @@ android {
 
     defaultConfig {
         minSdk = 29
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -42,7 +41,5 @@ dependencies {
     // JVM data tests
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.androidx.paging.testing)
     testImplementation(libs.okhttp.mockwebserver)
-
 }

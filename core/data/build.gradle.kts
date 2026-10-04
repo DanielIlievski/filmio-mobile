@@ -21,7 +21,6 @@ dependencies {
     implementation(libs.moshi.kotlin)
 
     testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.retrofit.converter.moshi)
     testImplementation(libs.okhttp.mockwebserver)
 }

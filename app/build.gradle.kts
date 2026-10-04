@@ -1,7 +1,37 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+val tokenFromFile = providers.fileContents(rootProject.layout.projectDirectory.file("tmdb.properties"))
+    .asText.orElse("").map { text ->
+        Properties().apply { load(text.reader()) }.getProperty("TMDB_READ_ACCESS_TOKEN", "")
+    }
+val tmdbToken = providers.environmentVariable("TMDB_READ_ACCESS_TOKEN")
+    .filter { it.isNotBlank() }
+    .orElse(tokenFromFile)
+    .getOrElse("")
+
+fun String.asJavaStringLiteral(): String = buildString {
+    append('"')
+    for (character in this@asJavaStringLiteral) {
+        append(when (character) {
+            '\\' -> "\\\\"
+            '"' -> "\\\""
+            '\n' -> "\\n"
+            '\r' -> "\\r"
+            '\t' -> "\\t"
+            '\b' -> "\\b"
+            '\u000C' -> "\\f"
+            else -> if (character.code < 32 || character.code > 126) {
+                "\\u%04x".format(character.code)
+            } else character.toString()
+        })
+    }
+    append('"')
 }
 
 android {
@@ -16,8 +46,7 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "TMDB_READ_ACCESS_TOKEN", tmdbToken.asJavaStringLiteral())
     }
 
     buildTypes {
@@ -33,6 +62,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -40,6 +70,7 @@ dependencies {
     // Feature wiring
     implementation(project(":feature:catalog:data"))
     implementation(project(":feature:catalog:presentation"))
+    implementation(project(":feature:catalog:database"))
 
     // AndroidX and Compose
     implementation(platform(libs.androidx.compose.bom))
@@ -49,8 +80,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
-    // Align the app runtime with the AndroidX JUnit test APK's required version.
-    implementation(libs.androidx.concurrent.futures)
 
     // Navigation and saved routes
     implementation(libs.androidx.lifecycle.viewmodel.navigation3)
@@ -61,15 +90,6 @@ dependencies {
     // Dependency injection
     implementation(platform(libs.koin.bom))
     implementation(libs.koin.android)
-
-    // Local unit tests
-    testImplementation(libs.junit)
-
-    // Instrumented Compose tests
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.androidx.junit)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     // Debug previews
     debugImplementation(libs.androidx.compose.ui.tooling)

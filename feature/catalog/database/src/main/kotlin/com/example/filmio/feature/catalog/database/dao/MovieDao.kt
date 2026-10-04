@@ -9,9 +9,13 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.example.filmio.feature.catalog.database.entities.MovieEntity
 import com.example.filmio.feature.catalog.database.util.literalTitleSearchPattern
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 abstract class MovieDao {
+    @Query("SELECT * FROM movies ORDER BY title COLLATE NOCASE ASC, id ASC")
+    abstract fun observeMovies(): Flow<List<MovieEntity>>
+
     @Query("SELECT * FROM movies ORDER BY title COLLATE NOCASE ASC, id ASC")
     abstract fun pagingSource(): PagingSource<Int, MovieEntity>
 

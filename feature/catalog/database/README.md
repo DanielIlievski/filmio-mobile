@@ -5,11 +5,13 @@ This Android library owns the five-table `CatalogDatabase` version 1:
 `movie_favorites`. The initial export is under
 `schemas/com.example.filmio.feature.catalog.database.CatalogDatabase/1.json`.
 The unshipped version-1 draft was revised before production construction or DI
-integration. The future filename is `filmio-catalog.db`; construction, migrations,
-and DI remain integration work. Adding the DAOs does not change the version-1 schema.
+integration. `createCatalogDatabase(context)` now constructs persistent `filmio-catalog.db` using
+application context. App supplies its singleton/DAO bindings through Koin. Future
+released schema changes still require preserving migrations; the observer/factory
+leave the version-1 export unchanged.
 
-`catalog:data` depends on this module and will map DTOs to local records and
-committed reads to domain models. Database has no feature domain/data/presentation
+`catalog:data` depends on this module and maps validated popular-movie DTOs to local
+records and committed reads to domain models. Database has no feature domain/data/presentation
 or networking dependency. Room runtime is exported for the public superclass;
 Paging common and coroutines core are exported for public `PagingSource` and `Flow`
 signatures; other storage dependencies are private. Versions remain unchanged.
@@ -21,7 +23,7 @@ interface per table:
 
 | DAO | Public operations | Contract |
 | --- | --- | --- |
-| `MovieDao` | `pagingSource`, `searchPagingSource`, `getMovie`, `upsertMovies` | Catalog/search paging in title/ID order; nullable one-shot summary read; atomic additive page upserts. |
+| `MovieDao` | `observeMovies`, `pagingSource`, `searchPagingSource`, `getMovie`, `upsertMovies` | Whole-catalog Flow and catalog/search paging in title/ID order; nullable one-shot summary read; atomic additive page upserts. |
 | `MovieDetailDao` | `getMovieDetail`, `observeMovieDetail`, `upsertMovieDetail` | Transactionally read/observe one snapshot; atomically replace summary, detail, and ordered owned children. |
 | `MovieFavoriteDao` | `pagingSource`, `observeIsFavorite`, `addFavorite`, `removeFavorite` | Current canonical summaries with favorite timestamps; observable status; local idempotent writes. |
 
@@ -84,31 +86,18 @@ response cannot publish into the new session. Relaunch keeps movie content and
 favorites while remote pagination starts at page 1. There are no persistent result
 sets, memberships, query history, page keys, feed/source flags, or per-movie order.
 
-These are integration contracts. The app/search/remote flows are not wired yet.
-
-## Verified storage foundation
-
-- Canonical movies have optional detail snapshots, ordered owned genres/companies,
-  and independent local favorites. Null/zero values remain distinct, with `Long`
-  budget/revenue preserving amounts beyond the `Int` range.
-- PK/FK and owner/position uniqueness reject invalid/dangling metadata. Favorites
-  restrict canonical deletion; removing details cascades only their owned children.
-- DAO non-destructive page writes share canonical identity and retain omitted
-  movies, details, and favorites, including duplicate-only and empty pages. Forced
-  page/detail failure and cancellation before commit preserve committed content.
-- DAO local-match/remote-ID paging and SQL fixtures select only committed rows,
-  support new offline queries, include API-only matches, and deduplicate IDs without
-  result tables. Large active-ID sets, SQL punctuation, and blank input are covered.
-- Production snapshot reads preserve response positions, distinguish missing and
-  summary-only rows, clear omitted detail data, and reject mismatched owners.
-- Favorite paging/status observation covers idempotent add/remove, timestamp order,
-  updated summaries, and invalidation. Catalog/search sources also invalidate after writes.
-- File-backed reopen retains the shared catalog, optional details, ordered metadata,
-  favorites, and local matching. Tests close resources and remove temporary files.
-
-Schema fixtures and DAO tests exercise actual Room-created storage and local
-PagingSource/Flow behavior. They do not prove network/mediator/repository/UI behavior.
-Artwork paths do not guarantee offline image bytes.
+The page-1 popular-movie flow is now wired through `OfflineFirstCatalogRepository`,
+`MovieDao.observeMovies()`, and a temporary text-only Compose screen. Observation is
+cold and independent of HTTP. Refresh returns success only after additive commit;
+local read/write failures propagate without a custom wrapper. The ViewModel retains
+content and offers generic storage retry feedback; cancellation remains cancellation.
+The repository accepts an explicit page, rejects mismatched response pages, skips null
+DTO entries, and maps values directly with one timestamp for the atomic batch.
+The app starts one refresh per ViewModel and provides explicit refresh/local-read retries.
+The ViewModel ignores repeated refresh input during an active request; the repository
+has no refresh Mutex. The screen still requests page 1; scrolling via Paging and
+automatic reconnect remain future work.
+Search, details/favorite operations, and paged remote sessions remain integration work.
 
 ## Integration handoff
 
@@ -126,45 +115,24 @@ failure. End on empty raw results, reported last page, or accessible page 500;
 reject mismatched page metadata. Local match/catalog/new-row counts do not decide end.
 
 All movie callers use `en-US`; search uses `include_adult=false`. Local matches do
-not wait for remote debounce. Reconnect retries/refreshes the active catalog/query
-while content remains visible; it does not synchronize historical queries. There is
+not wait for remote debounce. The eventual paged/search integration will refresh the active catalog/query on reconnect
+while content remains visible; the temporary page-1 screen requires explicit Refresh/Retry.
+The eventual reconnect policy does not synchronize historical queries. There is
 no one-hour result-set freshness policy. Details retain tunable 24-hour freshness
 with an injected clock; clock rollback makes them stale without deleting content.
 
-The following covers every revised capability requirement for subsequent tests:
+The assignment uses local JVM unit tests only. Repository fakes exercise coordination,
+not Room SQL or durable persistence. Review storage changes against these DAO contracts
+and the exported schema, and use the root README's manual offline walkthrough.
 
-| Capability requirement | Integration tests / owner |
-| --- | --- |
-| Canonical identity | Popular + two searches + detail share identity; equal movie/series IDs remain separate (data). |
-| Summary/detail completeness | Summary-only offline detail unavailable; fetched nullable details retain availability (data and presentation). |
-| Enrichment and summary updates | Same summary enriched; later page preserves extended time/children; null collection/empty lists clear atomically; uncached detail becomes catalog content (data and database local APIs). |
-| Nullable selected metadata | Blank/null normalization; known zero; invalid IDs/titles/dates/numerics reject complete update (data). |
-| Boundary separation | Committed local reads map to framework-free domain content (data). |
-| Independent favorites | Favorite survives omitted movies/refresh/restart; no dangling favorite; local add/remove offline (data and database local APIs). |
-| Failed/canceled updates | Timeout/malformed/local failure retains snapshot; pre-commit cancellation rolls back; committed transaction remains valid (data and database local APIs). |
-| Durable/versioned content | Real endpoint content reopens offline; future migration retains movies/details/children/favorites (data and database). |
-| Shared catalog | Popular A/B and search B/C produce A/B/C once; detail shares identity; deterministic local order (data and database local APIs). |
-| Immediate local search | New unseen query offline; cache before response/debounce; title/original-title literal punctuation/ASCII case; blank input clears old remote membership (data and presentation). |
-| Local/remote union | Cache A/B + API B/C yields A/B/C; API-only title mismatch included; empty API keeps local matches; publication follows successful persistence (data and database local APIs). |
-| Additive refresh/failures | Omitted movie and empty success retained; failed search leaves cached matches with retry; offline no-match is incomplete rather than confirmed remote-empty (data and presentation). |
-| Session pagination | Restart page 1 with cached rows; failed append retries same page; duplicate-only page advances (data mediator). |
-| Endpoint end | Last search page terminal; page 500 cap; short nonempty page continues; wrong response page rejected regardless of local counts (data). |
-| Superseded requests | Slow old query/type IDs/errors/key cannot publish into new search; append/refresh serialization; selected type and overlapping IDs isolated (data and presentation). |
-| Timing/reconnect | Immediate local input while remote debounce waits; rate configurable; active query/catalog refreshes on reconnect with content visible (data and presentation). |
-
-Keep HTTP/mapping/repository/mediator tests in data, real local transaction/migration
-tests here, and debounce/type/load-state tests in presentation. Series storage,
-author endpoints, and multiple content locales require later design. Companies are
-production metadata. No automatic eviction or routine destructive migration is
-permitted for promised offline content.
+Series storage, author endpoints, and multiple content locales require later design.
+Companies are production metadata. No automatic eviction or routine destructive
+migration is permitted for promised offline content.
 
 ## Verification
 
-With an available Android device/emulator:
-
 ```sh
-./gradlew :feature:catalog:database:assembleDebug :feature:catalog:data:assembleDebug
-./gradlew :feature:catalog:database:connectedDebugAndroidTest
+./gradlew :feature:catalog:database:assembleDebug :feature:catalog:data:testDebugUnitTest
 ```
 
 Review the exported schema with its implementation. Future delivered-schema changes
