@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface CatalogRepository {
 
-    suspend fun fetchMovies(page: Int): EmptyResult<DataError.Network>
+    suspend fun fetchMovies(page: Int): EmptyResult<DataError>
 
     fun getMovies(): Flow<List<Movie>>
 }

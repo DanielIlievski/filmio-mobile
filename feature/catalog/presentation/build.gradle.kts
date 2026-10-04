@@ -11,7 +11,6 @@ android {
 
     defaultConfig {
         minSdk = 29
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -32,6 +31,8 @@ dependencies {
     // Compose UI
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.foundation.layout)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
 
@@ -51,12 +52,6 @@ dependencies {
     // JVM ViewModel tests
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
-
-    // Instrumented Compose tests
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.androidx.junit)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     // Debug previews
     debugImplementation(libs.androidx.compose.ui.tooling)

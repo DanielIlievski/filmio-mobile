@@ -1,0 +1,17 @@
+<resources>
+    <string name="stored_movies">Stored movies</string>
+    <string name="refresh">Refresh</string>
+    <string name="retry">Retry</string>
+    <string name="loading_movies">Loading movies…</string>
+    <string name="no_description">No description available.</string>
+    <string name="empty_movies">No stored movies.</string>
+    <string name="error_configuration">Configure the TMDB Read Access Token in your private configuration and rebuild.</string>
+    <string name="error_offline">No connection. Stored movies remain available; retry when connected.</string>
+    <string name="error_timeout">The request timed out. Please retry.</string>
+    <string name="error_rate_limit">Too many requests. Wait a little before retrying.</string>
+    <string name="error_malformed">The service returned an unreadable response. Please retry.</string>
+    <string name="error_service">The service is unavailable. Please retry later.</string>
+    <string name="error_disk_full">Storage is full. Free some space and retry.</string>
+    <string name="error_storage">Stored movies are unavailable. Please retry.</string>
+    <string name="error_refresh">Movies could not be refreshed. Please retry.</string>
+</resources>

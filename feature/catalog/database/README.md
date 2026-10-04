@@ -89,11 +89,14 @@ sets, memberships, query history, page keys, feed/source flags, or per-movie ord
 The page-1 popular-movie flow is now wired through `OfflineFirstCatalogRepository`,
 `MovieDao.observeMovies()`, and a temporary text-only Compose screen. Observation is
 cold and independent of HTTP. Refresh returns success only after additive commit;
-local read/write failures propagate without a custom wrapper. The ViewModel retains
-content and offers generic storage retry feedback; cancellation remains cancellation.
+DAO failures propagate to catalog data. Its `safeDatabaseUpdate` helper maps Android
+`SQLiteFullException` to `DataError.Local.DISK_FULL` and other `SQLiteException`s to
+`DataError.Local.UNKNOWN`; fetch returns that result for localized retry feedback.
+Local reads and unexpected defects remain unwrapped; cancellation remains cancellation.
 The repository accepts an explicit page, rejects mismatched response pages, skips null
 DTO entries, and maps values directly with one timestamp for the atomic batch.
-The app starts one refresh per ViewModel and provides explicit refresh/local-read retries.
+The app starts one refresh per ViewModel and provides explicit refresh/retry actions.
+Recovery from local-read failures remains deferred.
 The ViewModel ignores repeated refresh input during an active request; the repository
 has no refresh Mutex. The screen still requests page 1; scrolling via Paging and
 automatic reconnect remain future work.

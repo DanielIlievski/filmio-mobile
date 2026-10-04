@@ -1,5 +1,6 @@
 package com.example.filmio.feature.catalog.data
 
+import android.database.sqlite.SQLiteFullException
 import androidx.paging.PagingSource
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.example.filmio.core.domain.DataError
@@ -10,11 +11,24 @@ import com.example.filmio.feature.catalog.data.networking.dto.PopularMoviesRespo
 import com.example.filmio.feature.catalog.data.repository.OfflineFirstCatalogRepository
 import com.example.filmio.feature.catalog.database.dao.MovieDao
 import com.example.filmio.feature.catalog.database.entities.MovieEntity
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.test.*
-import org.junit.Assert.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.fail
 import org.junit.Test
+import org.mockito.Mockito.mock
 import java.net.UnknownHostException
 import java.time.Clock
 import java.time.Instant
@@ -96,6 +110,15 @@ class CatalogRepositoryTest {
         }
         assertEquals(listOf(2, 1), pages)
         assertEquals(2, dao.writes)
+    }
+
+    @Test fun sqliteWriteFailureReturnsLocalErrorAndKeepsPreviouslyStoredRows() = runTest {
+        dao.rows.value = listOf(entity("Cached"))
+        dao.beforeWrite = { throw mock(SQLiteFullException::class.java) }
+
+        assertEquals(Result.Error(DataError.Local.DISK_FULL), repository().fetchMovies(page = 1))
+        assertEquals("Cached", dao.rows.value.single().title)
+        assertEquals(0, dao.writes)
     }
 
     @Test fun commitsNonnullSummariesFromTheRequestedPage() = runTest {

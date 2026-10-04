@@ -6,6 +6,7 @@ import com.example.filmio.core.domain.EmptyResult
 import com.example.filmio.core.domain.Result
 import com.example.filmio.core.domain.asEmptyResult
 import com.example.filmio.core.domain.onSuccess
+import com.example.filmio.feature.catalog.data.database.safeDatabaseUpdate
 import com.example.filmio.feature.catalog.data.mapping.toDomain
 import com.example.filmio.feature.catalog.data.mapping.toEntity
 import com.example.filmio.feature.catalog.data.networking.TmdbService
@@ -25,8 +26,9 @@ class OfflineFirstCatalogRepository(
     private val clock: Clock,
 ) : CatalogRepository {
 
-    override suspend fun fetchMovies(page: Int): EmptyResult<DataError.Network> {
-        val requestedPage = page.coerceAtLeast(1)
+    override suspend fun fetchMovies(page: Int): EmptyResult<DataError> {
+        val requestedPage = page.coerceAtLeast(2)
+
         return safeCall { service.getPopularMovies(requestedPage, LANGUAGE) }
             .onSuccess { moviesDto ->
                 if (moviesDto.page != requestedPage) return Result.Error(DataError.Network.SERIALIZATION)
@@ -35,7 +37,10 @@ class OfflineFirstCatalogRepository(
                     movie?.toEntity(updatedAtEpochMillis)
                 }
                 currentCoroutineContext().ensureActive()
-                movieDao.upsertMovies(movieEntities)
+
+                return safeDatabaseUpdate {
+                    movieDao.upsertMovies(movieEntities)
+                }
             }
             .asEmptyResult()
     }
