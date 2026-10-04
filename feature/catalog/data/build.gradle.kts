@@ -1,7 +1,5 @@
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.ksp)
-    alias(libs.plugins.androidx.room)
 }
 
 android {
@@ -21,14 +19,11 @@ android {
     }
 }
 
-room {
-    schemaDirectory("$projectDir/schemas")
-}
-
 dependencies {
     // Feature domain contract
     implementation(project(":feature:catalog:domain"))
     implementation(project(":core:data"))
+    implementation(project(":feature:catalog:database"))
 
     // Dependency injection
     implementation(platform(libs.koin.bom))
@@ -37,12 +32,6 @@ dependencies {
     // Coroutines and pagination
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.androidx.paging.runtime)
-
-    // Room cache and local favorites
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    implementation(libs.androidx.room.paging)
-    ksp(libs.androidx.room.compiler)
 
     // Retrofit networking and Moshi conversion
     implementation(libs.retrofit.core)
@@ -56,8 +45,4 @@ dependencies {
     testImplementation(libs.androidx.paging.testing)
     testImplementation(libs.okhttp.mockwebserver)
 
-    // Instrumented Room tests
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.room.testing)
-    androidTestImplementation(libs.kotlinx.coroutines.test)
 }
