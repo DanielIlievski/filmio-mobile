@@ -7,6 +7,12 @@ import androidx.room.Room
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.example.filmio.feature.catalog.database.entities.MovieDetailEntity
+import com.example.filmio.feature.catalog.database.entities.MovieEntity
+import com.example.filmio.feature.catalog.database.entities.MovieFavoriteEntity
+import com.example.filmio.feature.catalog.database.entities.MovieGenreEntity
+import com.example.filmio.feature.catalog.database.entities.MovieProductionCompanyEntity
+import com.example.filmio.feature.catalog.database.util.literalTitleSearchPattern
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,7 +25,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
 
-/** SQL fixtures exercise the shipped Room schema without introducing a production DAO. */
+/** Direct SQL fixtures complement production DAO tests with schema-level constraint coverage. */
 @RunWith(AndroidJUnit4::class)
 class CatalogDatabaseTest {
     private lateinit var context: Context
@@ -168,12 +174,15 @@ class CatalogDatabaseTest {
         fixture.insertMovie(movie(3).copy(title = "Different", originalTitle = "The ALPHA original"))
         fixture.insertMovie(movie(4).copy(title = "100%_Movie"))
         fixture.insertMovie(movie(5).copy(title = "星の物語"))
+        fixture.insertMovie(movie(6).copy(title = "ÉCLAIR"))
 
         assertEquals(listOf(1L, 3L), fixture.searchIds(" alpha "))
         assertEquals(listOf(3L), fixture.searchIds("original"))
         assertEquals(listOf(4L), fixture.searchIds("%"))
         assertEquals(listOf(4L), fixture.searchIds("_"))
         assertEquals(listOf(5L), fixture.searchIds("星"))
+        assertEquals(listOf(6L), fixture.searchIds("É"))
+        assertTrue(fixture.searchIds("é").isEmpty())
         assertTrue(fixture.searchIds("missing").isEmpty())
         assertTrue(fixture.searchIds("   ").isEmpty())
         assertEquals(5, fixture.userTables().size)
@@ -367,12 +376,13 @@ private class CatalogFixture(val sql: SupportSQLiteDatabase) {
 
     fun searchIds(rawQuery: String, remoteIds: List<Long> = emptyList()): List<Long> {
         val query = rawQuery.trim()
+        val pattern = literalTitleSearchPattern(query)
         val remoteClause = if (remoteIds.isEmpty()) "0" else "id IN (${remoteIds.joinToString { "?" }})"
         return rows(
-            "SELECT id FROM movies WHERE (? <> '' AND (instr(lower(title), lower(?)) > 0 " +
-                "OR instr(lower(coalesce(originalTitle, '')), lower(?)) > 0)) OR $remoteClause " +
+            "SELECT id FROM movies WHERE (? <> '' AND (title GLOB ? " +
+                "OR coalesce(originalTitle, '') GLOB ?)) OR $remoteClause " +
                 "ORDER BY title COLLATE NOCASE, id",
-            (listOf<Any?>(query, query, query) + remoteIds).toTypedArray(),
+            (listOf<Any?>(query, pattern, pattern) + remoteIds).toTypedArray(),
         ).map { it.single() as Long }
     }
 

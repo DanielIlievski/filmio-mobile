@@ -1,4 +1,4 @@
-package com.example.filmio.feature.catalog.database
+package com.example.filmio.feature.catalog.database.entities
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey

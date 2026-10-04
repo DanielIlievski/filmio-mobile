@@ -1,17 +1,49 @@
-# Catalog database foundation
+# Catalog database
 
 This Android library owns the five-table `CatalogDatabase` version 1:
 `movies`, `movie_details`, `movie_genres`, `movie_production_companies`, and
 `movie_favorites`. The initial export is under
 `schemas/com.example.filmio.feature.catalog.database.CatalogDatabase/1.json`.
 The unshipped version-1 draft was revised before production construction or DI
-integration. The future filename is `filmio-catalog.db`; no builder, migration,
-production DAO, or local write API ships in this slice.
+integration. The future filename is `filmio-catalog.db`; construction, migrations,
+and DI remain integration work. Adding the DAOs does not change the version-1 schema.
 
 `catalog:data` depends on this module and will map DTOs to local records and
 committed reads to domain models. Database has no feature domain/data/presentation
 or networking dependency. Room runtime is exported for the public superclass;
-other storage dependencies are private. Versions remain unchanged.
+Paging common and coroutines core are exported for public `PagingSource` and `Flow`
+signatures; other storage dependencies are private. Versions remain unchanged.
+
+## DAO API
+
+`CatalogDatabase` exposes three DAOs by operation ownership, rather than one CRUD
+interface per table:
+
+| DAO | Public operations | Contract |
+| --- | --- | --- |
+| `MovieDao` | `pagingSource`, `searchPagingSource`, `getMovie`, `upsertMovies` | Catalog/search paging in title/ID order; nullable one-shot summary read; atomic additive page upserts. |
+| `MovieDetailDao` | `getMovieDetail`, `observeMovieDetail`, `upsertMovieDetail` | Transactionally read/observe one snapshot; atomically replace summary, detail, and ordered owned children. |
+| `MovieFavoriteDao` | `pagingSource`, `observeIsFavorite`, `addFavorite`, `removeFavorite` | Current canonical summaries with favorite timestamps; observable status; local idempotent writes. |
+
+`MovieDetailSnapshot` being null means the movie is absent. A nonnull snapshot with
+null `detail` is a summary-only movie; fetched details can have nullable metadata.
+Room relation reads run inside a transaction, and the DAO sorts children by stored
+position before returning/emitting the snapshot. Complete replacement clears null
+fields and empty child lists. It validates matching owners before writing, upserts
+parents without destructive replacement, and deletes old children before inserting
+new ones so positions can be reordered. Genre/company helpers are protected; data
+cannot publish an incomplete snapshot through separate child-table DAOs.
+
+Favorites are newest first (`addedAtEpochMillis DESC, movie ID ASC` for ties).
+Adding an existing favorite preserves its original added time. Removing an absent
+favorite is harmless; removing then re-adding records the new time. Adding requires
+an existing canonical movie. Favorite paging joins current movie summaries, so a
+later summary refresh appears without copying data into favorites.
+
+No generic cache deletion, independent child CRUD, remote continuation, freshness
+decisions, or HTTP handling is exposed. Local constraint/storage failures and
+cancellation propagate to data; Room rolls back failed transactions. A successful
+commit is the point after which data may publish IDs or advance continuation.
 
 ## Selected catalog and search behavior
 
@@ -26,6 +58,18 @@ uses literal substrings after trimming, ignores ASCII letter case, and preserves
 other characters literally. Percent/underscore are not wildcards. The initial
 ordering is `title COLLATE NOCASE ASC, id ASC`; neither local matching nor order
 claims to reproduce TMDB semantics/ranking.
+
+The bound search pattern uses GLOB with explicit ASCII letter pairs and escaped
+pattern characters. Android SQLite builds can use ICU-aware `lower()`, so calling
+that function would also fold accented letters and break the selected contract.
+
+Blank search input returns no rows, even if obsolete active IDs were supplied.
+The search factory binds user text and constructs its remote-ID clause exclusively
+from typed `Long` values. Numeric ID literals allow long sessions without exceeding
+older Android SQLite bind limits. Only committed movies are returned. The factory
+captures its query and IDs; data must create a new source/Pager when those inputs
+change. Room invalidates existing sources for relevant database writes, not for
+changes to external in-memory session lists.
 
 Online, an independently debounced API request validates and saves movies to Room
 before the active query publishes their IDs. Visible search is the deduplicated
@@ -49,21 +93,28 @@ These are integration contracts. The app/search/remote flows are not wired yet.
   budget/revenue preserving amounts beyond the `Int` range.
 - PK/FK and owner/position uniqueness reject invalid/dangling metadata. Favorites
   restrict canonical deletion; removing details cascades only their owned children.
-- Test-only non-destructive page writes share canonical identity and retain omitted
-  movies, details, and favorites. Forced failure rolls back all five tables together.
-- Local-match/remote-ID union SQL fixtures select only committed rows, support new
-  offline queries, include API-only matches, and deduplicate IDs without result tables.
+- DAO non-destructive page writes share canonical identity and retain omitted
+  movies, details, and favorites, including duplicate-only and empty pages. Forced
+  page/detail failure and cancellation before commit preserve committed content.
+- DAO local-match/remote-ID paging and SQL fixtures select only committed rows,
+  support new offline queries, include API-only matches, and deduplicate IDs without
+  result tables. Large active-ID sets, SQL punctuation, and blank input are covered.
+- Production snapshot reads preserve response positions, distinguish missing and
+  summary-only rows, clear omitted detail data, and reject mismatched owners.
+- Favorite paging/status observation covers idempotent add/remove, timestamp order,
+  updated summaries, and invalidation. Catalog/search sources also invalidate after writes.
 - File-backed reopen retains the shared catalog, optional details, ordered metadata,
   favorites, and local matching. Tests close resources and remove temporary files.
 
-Fixtures exercise actual Room-created storage, not production access APIs or
-network/Paging/UI behavior. Artwork paths do not guarantee offline image bytes.
+Schema fixtures and DAO tests exercise actual Room-created storage and local
+PagingSource/Flow behavior. They do not prove network/mediator/repository/UI behavior.
+Artwork paths do not guarantee offline image bytes.
 
 ## Integration handoff
 
 Data owns DTO → entity → domain mapping, validation, networking, repositories,
 `Pager`/`RemoteMediator`, active session state, and typed error translation. Database
-owns future SQL/ordered local projections/`PagingSource` and atomic summary-page
+owns SQL/ordered local projections/`PagingSource` and atomic summary-page
 upserts/detail replacement. Do not put network calls inside transactions. Parent
 writes use `@Upsert` or insert-ignore plus update, never `INSERT OR REPLACE`.
 
@@ -114,7 +165,6 @@ With an available Android device/emulator:
 ```sh
 ./gradlew :feature:catalog:database:assembleDebug :feature:catalog:data:assembleDebug
 ./gradlew :feature:catalog:database:connectedDebugAndroidTest
-openspec validate define-movie-local-database --strict
 ```
 
 Review the exported schema with its implementation. Future delivered-schema changes

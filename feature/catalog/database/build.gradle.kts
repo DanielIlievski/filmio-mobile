@@ -28,6 +28,9 @@ room {
 dependencies {
     // Public CatalogDatabase extends RoomDatabase.
     api(libs.androidx.room.runtime)
+    // Public DAO reads expose PagingSource and Flow.
+    api(libs.androidx.paging.common)
+    api(libs.kotlinx.coroutines.core)
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.paging)
     ksp(libs.androidx.room.compiler)
