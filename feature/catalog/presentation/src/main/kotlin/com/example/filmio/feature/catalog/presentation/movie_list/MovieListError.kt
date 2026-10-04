@@ -3,6 +3,7 @@ package com.example.filmio.feature.catalog.presentation.movie_list
 import com.example.filmio.core.domain.DataError
 import com.example.filmio.core.presentation.util.UiText
 import com.example.filmio.feature.catalog.presentation.R
+import com.example.filmio.feature.catalog.domain.repository.CatalogPagingException
 
 internal fun DataError.toUiText(): UiText = UiText.Resource(when (this) {
     DataError.Network.UNAUTHORIZED, DataError.Network.FORBIDDEN -> R.string.error_configuration
@@ -16,3 +17,6 @@ internal fun DataError.toUiText(): UiText = UiText.Resource(when (this) {
     DataError.Network.BAD_REQUEST, DataError.Network.NOT_FOUND, DataError.Network.CONFLICT,
     DataError.Network.PAYLOAD_TOO_LARGE, DataError.Network.UNKNOWN -> R.string.error_refresh
 })
+
+internal fun Throwable.toPagingUiText(): UiText =
+    (this as? CatalogPagingException)?.error?.toUiText() ?: UiText.Resource(R.string.error_storage)

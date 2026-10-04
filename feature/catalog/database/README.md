@@ -86,21 +86,27 @@ response cannot publish into the new session. Relaunch keeps movie content and
 favorites while remote pagination starts at page 1. There are no persistent result
 sets, memberships, query history, page keys, feed/source flags, or per-movie order.
 
-The page-1 popular-movie flow is now wired through `OfflineFirstCatalogRepository`,
-`MovieDao.observeMovies()`, and a temporary text-only Compose screen. Observation is
-cold and independent of HTTP. Refresh returns success only after additive commit;
-DAO failures propagate to catalog data. Its `safeDatabaseUpdate` helper maps Android
-`SQLiteFullException` to `DataError.Local.DISK_FULL` and other `SQLiteException`s to
-`DataError.Local.UNKNOWN`; fetch returns that result for localized retry feedback.
-Local reads and unexpected defects remain unwrapped; cancellation remains cancellation.
-The repository accepts an explicit page, rejects mismatched response pages, skips null
-DTO entries, and maps values directly with one timestamp for the atomic batch.
-The app starts one refresh per ViewModel and provides explicit refresh/retry actions.
-Recovery from local-read failures remains deferred.
-The ViewModel ignores repeated refresh input during an active request; the repository
-has no refresh Mutex. The screen still requests page 1; scrolling via Paging and
-automatic reconnect remain future work.
-Search, details/favorite operations, and paged remote sessions remain integration work.
+The paginated popular-movie flow uses `OfflineFirstCatalogRepository`,
+`MovieDao.pagingSource()`, and `PopularMoviesRemoteMediator`. Room remains the read
+source while the mediator commits additive summaries before advancing in-memory
+continuation. The data-layer anchor adapter preserves absolute local refresh keys
+with disabled placeholders and relays Room invalidation; it does not modify queries
+or the schema. Each Pager also invalidates its source after a successful nonterminal
+all-null batch, since no table write can wake Paging in that case. Duplicate-only
+writes still invalidate normally and do not imply terminal behavior.
+
+The mediator rejects mismatched response pages, skips null entries, maps supplied
+values directly, and uses one timestamp per batch. `safeDatabaseUpdate` maps expected
+SQLite write failures to typed domain errors carried through Paging load states.
+Cancellation and unexpected defects propagate. Native Paging coordinates local
+loads, remote refresh/append, and retry. A local load reaching the database end may
+request the next remote page immediately, including after initial refresh before
+scrolling. Local read load errors use Paging retry with safe storage feedback.
+
+The ViewModel caches one stream, projects load feedback, and emits Refresh/Retry
+commands to the active root. Active default-network reconnect triggers page-1 refresh
+without removing cache content; callbacks are released when the screen stops. Search,
+details/favorite domain operations, and their presentation remain integration work.
 
 ## Integration handoff
 
@@ -118,9 +124,9 @@ failure. End on empty raw results, reported last page, or accessible page 500;
 reject mismatched page metadata. Local match/catalog/new-row counts do not decide end.
 
 All movie callers use `en-US`; search uses `include_adult=false`. Local matches do
-not wait for remote debounce. The eventual paged/search integration will refresh the active catalog/query on reconnect
-while content remains visible; the temporary page-1 screen requires explicit Refresh/Retry.
-The eventual reconnect policy does not synchronize historical queries. There is
+not wait for remote debounce. The implemented movie list refreshes the active catalog on reconnect while content
+remains visible. Search will follow the same active-query policy when implemented.
+Reconnect does not synchronize historical queries. There is
 no one-hour result-set freshness policy. Details retain tunable 24-hour freshness
 with an injected clock; clock rollback makes them stale without deleting content.
 

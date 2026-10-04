@@ -99,6 +99,7 @@ class TmdbServiceTest {
         assertEquals(7L, response.results.first()!!.id)
         assertEquals(0.0, response.results.first()!!.voteAverage!!, 0.0)
         assertNull(response.results.last())
+        assertNull(response.totalPages)
         val request = server.takeRequest(2, TimeUnit.SECONDS)!!
         assertEquals("GET", request.method)
         assertEquals("/3/movie/popular", request.requestUrl!!.encodedPath)
@@ -109,5 +110,15 @@ class TmdbServiceTest {
         assertFalse(config.toString().contains("fake-test-token"))
         assertFalse(request.path!!.contains("fake-test-token"))
         assertEquals(1, server.requestCount)
+    }
+
+    @Test fun decodesSuppliedTotalPages() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"page":1,"total_pages":12,"results":[]}"""))
+        val response = service.getPopularMovies(1, "en-US")
+        assertEquals(1, response.page)
+        assertEquals(12, response.totalPages)
+        val request = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("1", request.requestUrl!!.queryParameter("page"))
+        assertEquals("en-US", request.requestUrl!!.queryParameter("language"))
     }
 }

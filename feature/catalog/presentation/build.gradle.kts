@@ -52,6 +52,7 @@ dependencies {
     // JVM ViewModel tests
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.paging.testing)
 
     // Debug previews
     debugImplementation(libs.androidx.compose.ui.tooling)

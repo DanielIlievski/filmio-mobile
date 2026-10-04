@@ -1,38 +1,35 @@
 package com.example.filmio.feature.catalog.presentation.movie_list
 
 import androidx.lifecycle.ViewModelStore
+import androidx.paging.CombinedLoadStates
+import androidx.paging.LoadState
+import androidx.paging.LoadStates
+import androidx.paging.PagingData
+import androidx.paging.testing.asSnapshot
 import com.example.filmio.core.domain.DataError
-import com.example.filmio.core.domain.EmptyResult
-import com.example.filmio.core.domain.Result
 import com.example.filmio.core.presentation.util.UiText
 import com.example.filmio.feature.catalog.domain.model.Movie
+import com.example.filmio.feature.catalog.domain.repository.ConnectivityObserver
+import com.example.filmio.feature.catalog.domain.repository.CatalogPagingException
 import com.example.filmio.feature.catalog.domain.repository.CatalogRepository
 import com.example.filmio.feature.catalog.presentation.R
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
 import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
@@ -40,307 +37,268 @@ import org.junit.Test
 class MovieListViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private val store = ViewModelStore()
+    private val connectivity = FakeConnectivityObserver()
     private val repository = FakeCatalogRepository()
+    private fun vm(observer: ConnectivityObserver = connectivity) = MovieListViewModel(repository, observer).also { store.put("list", it) }
+    @Before fun setup() { Dispatchers.setMain(dispatcher) }
+    @After fun cleanup() { store.clear(); Dispatchers.resetMain() }
 
-    @Before
-    fun setup() {
-        Dispatchers.setMain(dispatcher)
+    @Test fun defaultsAndLocalOnlyCompletionNeverShowFalseEmpty() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onAction(loads())
+        assertTrue(vm.state.value.isInitialLoading)
+        assertFalse(vm.state.value.isEmpty)
+        vm.onAction(loads(remote = LoadState.Loading))
+        assertTrue(vm.state.value.isInitialLoading)
+        assertFalse(vm.state.value.isEmpty)
     }
 
-    @After
-    fun cleanup() {
-        store.clear()
-        Dispatchers.resetMain()
-    }
-
-    @Test
-    fun offlineFailureIsRetryableAndLocalEmissionsDoNotClearIt() = runTest {
-        repository.refresh = { Result.Error(DataError.Network.NO_INTERNET) }
-        val vm = viewModel()
-        runCurrent()
-        assertFalse(vm.state.value.isLoading)
-        assertTrue(vm.state.value.movies.isEmpty())
-        assertError(vm, R.string.error_offline)
-
-        repository.local.value = listOf(Movie(1, "Cached", null))
-        runCurrent()
-        assertEquals("Cached", vm.state.value.movies.single().title)
-        assertError(vm, R.string.error_offline)
-
-        vm.onAction(MovieListAction.OnRetryClick)
-        runCurrent()
-        assertEquals("Cached", vm.state.value.movies.single().title)
-        assertEquals(2, repository.requests)
-        assertEquals(1, repository.collections)
-        assertError(vm, R.string.error_offline)
-    }
-
-    @Test
-    fun retryRestartsFailedObservationAndRefreshesWithoutLosingLastReadMovies() = runTest {
-        repository.read = {
-            flow {
-                emit(listOf(Movie(1, "Cached", null)))
-                throw IllegalStateException("private storage detail")
-            }
-        }
-        val vm = viewModel()
-        runCurrent()
-        assertEquals("Cached", vm.state.value.movies.single().title)
-        assertError(vm, R.string.error_storage)
-
-        val gate = CompletableDeferred<Unit>()
-        repository.read = { repository.local }
-        repository.local.value = listOf(Movie(2, "Recovered", null))
-        repository.refresh = { gate.await(); Result.Success(Unit) }
-        vm.onAction(MovieListAction.OnRetryClick)
-        runCurrent()
-        assertTrue(vm.state.value.isLoading)
-        assertNull(vm.state.value.error)
-        assertEquals("Recovered", vm.state.value.movies.single().title)
-        assertEquals(2, repository.collections)
-        assertEquals(2, repository.requests)
-
-        gate.complete(Unit)
-        runCurrent()
-        assertFalse(vm.state.value.isLoading)
-        assertNull(vm.state.value.error)
-    }
-
-    @Test
-    fun localReadFailureTakesPriorityRegardlessOfWhichOperationFinishesFirst() = runTest {
-        for (readFailsFirst in listOf(true, false)) {
-            val readGate = CompletableDeferred<Unit>()
-            val refreshGate = CompletableDeferred<Unit>()
-            repository.read = { flow { readGate.await(); throw IllegalStateException("read failed") } }
-            repository.refresh = { refreshGate.await(); Result.Error(DataError.Network.SERIALIZATION) }
-            val vm = viewModel()
-            runCurrent()
-
-            if (readFailsFirst) readGate.complete(Unit) else refreshGate.complete(Unit)
-            runCurrent()
-            if (readFailsFirst) refreshGate.complete(Unit) else readGate.complete(Unit)
-            runCurrent()
-            assertError(vm, R.string.error_storage)
-            assertFalse(vm.state.value.isLoading)
-            store.clear()
-            runCurrent()
+    @Test fun successfulEmptyWaitsForBothSourcesInEitherSignalOrder() = runTest(dispatcher) {
+        for (localFirst in listOf(true, false)) {
+            val vm = vm()
+            vm.onAction(loads(source = LoadState.Loading, remote = LoadState.Loading))
+            vm.onAction(if (localFirst) loads(remote = LoadState.Loading) else loads(source = LoadState.Loading))
+            assertFalse(vm.state.value.isEmpty)
+            vm.onAction(loads())
+            assertTrue(vm.state.value.isEmpty)
+            assertFalse(vm.state.value.isInitialLoading)
         }
     }
 
-    @Test
-    fun refreshAlsoRetriesFailedObservationButRemoteSuccessCannotClearAnotherReadFailure() = runTest {
-        repository.read = { flow { throw IllegalStateException("unavailable storage") } }
-        val vm = viewModel()
-        runCurrent()
-        vm.onAction(MovieListAction.OnRefreshClick)
-        runCurrent()
-        assertEquals(2, repository.collections)
-        assertEquals(2, repository.requests)
-        assertError(vm, R.string.error_storage)
-        assertFalse(vm.state.value.isLoading)
-    }
-
-    @Test
-    fun retryClearsTypedWriteErrorAndPreservesCachedMovies() = runTest {
-        repository.local.value = listOf(Movie(1, "Cached", null))
-        repository.refresh = { Result.Error(DataError.Local.DISK_FULL) }
-        val vm = viewModel()
-        runCurrent()
-        assertError(vm, R.string.error_disk_full)
-        assertFalse(vm.state.value.isLoading)
-        assertEquals("Cached", vm.state.value.movies.single().title)
-
-        repository.refresh = { delay(100); Result.Error(DataError.Network.SERIALIZATION) }
-        vm.onAction(MovieListAction.OnRetryClick)
-        runCurrent()
-        assertNull(vm.state.value.error)
-        assertTrue(vm.state.value.isLoading)
-        assertEquals("Cached", vm.state.value.movies.single().title)
-        advanceUntilIdle()
-        assertError(vm, R.string.error_malformed)
-        assertFalse(vm.state.value.isLoading)
-
-        repository.refresh = { Result.Success(Unit) }
-        vm.onAction(MovieListAction.OnRetryClick)
-        runCurrent()
-        assertNull(vm.state.value.error)
-        assertEquals(1, repository.collections)
-    }
-
-    @Test
-    fun cachedObservationDoesNotWaitForRefreshAndRepeatedActionsDoNotQueueRequests() = runTest {
-        repository.local.value = listOf(Movie(1, "Cached", null))
-        repository.refresh = { delay(100); Result.Success(Unit) }
-        val vm = viewModel()
-        runCurrent()
-        assertEquals("Cached", vm.state.value.movies.single().title)
-        assertTrue(vm.state.value.isLoading)
-        vm.onAction(MovieListAction.OnRefreshClick)
-        vm.onAction(MovieListAction.OnRetryClick)
-        runCurrent()
-        assertEquals(1, repository.requests)
-        advanceUntilIdle()
-        assertFalse(vm.state.value.isLoading)
-        assertEquals(1, repository.requests)
-        vm.onAction(MovieListAction.OnRefreshClick)
-        advanceUntilIdle()
-        assertEquals(2, repository.requests)
-    }
-
-    @Test
-    fun emptySuccessWaitsForBothOperationsAndRefreshDoesNotManufactureMovies() = runTest {
-        for (readFinishesFirst in listOf(true, false)) {
-            val readGate = CompletableDeferred<Unit>()
-            val refreshGate = CompletableDeferred<Unit>()
-            repository.read = { flow { readGate.await(); emit(emptyList()) } }
-            repository.refresh = { refreshGate.await(); Result.Success(Unit) }
-            val vm = viewModel()
-            runCurrent()
-            if (readFinishesFirst) readGate.complete(Unit) else refreshGate.complete(Unit)
-            runCurrent()
-            assertTrue(vm.state.value.isLoading)
-            assertTrue(vm.state.value.movies.isEmpty())
-            val requests = repository.requests
-            vm.onAction(MovieListAction.OnRefreshClick)
-            vm.onAction(MovieListAction.OnRetryClick)
-            runCurrent()
-            assertEquals(requests, repository.requests)
-            if (readFinishesFirst) refreshGate.complete(Unit) else readGate.complete(Unit)
-            runCurrent()
-            assertFalse(vm.state.value.isLoading)
-            assertNull(vm.state.value.error)
-            assertTrue(vm.state.value.movies.isEmpty())
-            store.clear()
-            runCurrent()
+    @Test fun sourceFailureWinsInEitherOrderAndRemoteSuccessCannotEraseIt() = runTest(dispatcher) {
+        val localError = LoadState.Error(IllegalStateException("private database detail"))
+        for (localFirst in listOf(true, false)) {
+            val vm = vm()
+            vm.onAction(loads(source = LoadState.Loading, remote = LoadState.Loading))
+            vm.onAction(if (localFirst) loads(source = localError, remote = LoadState.Loading) else loads(source = LoadState.Loading))
+            vm.onAction(loads(source = localError))
+            assertEquals(R.string.error_storage, (vm.state.value.refreshError as UiText.Resource).id)
+            assertFalse(vm.state.value.isEmpty)
         }
     }
 
-    @Test
-    fun loadingStartsOnSubscriptionAndResubscriptionDoesNotRepeatInitialWork() = runTest {
-        val vm = MovieListViewModel(repository).also { store.put("movie-list", it) }
+    @Test fun offlineWithoutCacheIsUnavailableAndCachedRefreshAndAppendErrorsAreSeparate() = runTest(dispatcher) {
+        val vm = vm()
+        val offline = LoadState.Error(CatalogPagingException(DataError.Network.NO_INTERNET))
+        vm.onAction(loads(remote = offline))
+        assertFalse(vm.state.value.isEmpty)
+        assertFalse(vm.state.value.isInitialLoading)
+        assertEquals(R.string.error_offline, (vm.state.value.refreshError as UiText.Resource).id)
+        vm.onAction(loads(remote = offline, hasItems = true))
+        assertNotNull(vm.state.value.refreshError)
+        vm.onAction(loads(remoteAppend = offline, hasItems = true))
+        assertNull(vm.state.value.refreshError)
+        assertEquals(R.string.error_offline, (vm.state.value.appendError as UiText.Resource).id)
+        vm.onAction(loads(sourceAppend = LoadState.Error(IllegalStateException("private")), remoteAppend = offline, hasItems = true))
+        assertEquals(R.string.error_storage, (vm.state.value.appendError as UiText.Resource).id)
+    }
+
+    @Test fun settledTerminalRefreshDoesNotRequireSeeingTransientLoadingAndSurvivesRecollection() = runTest(dispatcher) {
+        val vm = vm()
+        vm.onAction(loads(remoteAppend = LoadState.NotLoading(true)))
+        assertTrue(vm.state.value.isEmpty)
+        vm.onAction(loads())
+        assertTrue(vm.state.value.isEmpty)
+    }
+
+    @Test fun actionsEmitDifferentCommandsGuardBusyInputAndSuccessEmitsNothing() = runTest(dispatcher) {
+        val vm = vm()
+        val events = mutableListOf<MovieListEvent>()
+        backgroundScope.launch { vm.events.collect { events += it } }
+        vm.onAction(loads(remoteAppend = LoadState.Error(CatalogPagingException(DataError.Network.REQUEST_TIMEOUT)), hasItems = true))
+        vm.onAction(MovieListAction.OnRetryClick)
+        vm.onAction(MovieListAction.OnRetryClick)
         runCurrent()
-        assertEquals(0, repository.requests)
+        assertEquals(listOf(MovieListEvent.RetryMovies), events)
+        assertTrue(vm.state.value.isAppending)
+        vm.onAction(loads(hasItems = true))
+        vm.onAction(MovieListAction.OnRefreshClick)
+        vm.onAction(MovieListAction.OnRefreshClick)
+        vm.onAction(MovieListAction.OnRetryClick)
+        runCurrent()
+        assertEquals(listOf(MovieListEvent.RetryMovies, MovieListEvent.RefreshMovies), events)
+        vm.onAction(loads(remote = LoadState.Loading, hasItems = true))
+        vm.onAction(loads(hasItems = true))
+        runCurrent()
+        assertEquals(2, events.size)
+        assertFalse(vm.state.value.isRefreshing)
+    }
+
+    @Test fun allTypedFailuresAreLocalizedAndUnknownSourceTextIsNeverUsed() {
+        val cases = mapOf(
+            DataError.Network.UNAUTHORIZED to R.string.error_configuration,
+            DataError.Network.FORBIDDEN to R.string.error_configuration,
+            DataError.Network.NO_INTERNET to R.string.error_offline,
+            DataError.Network.REQUEST_TIMEOUT to R.string.error_timeout,
+            DataError.Network.TOO_MANY_REQUESTS to R.string.error_rate_limit,
+            DataError.Network.SERIALIZATION to R.string.error_malformed,
+            DataError.Network.SERVER_ERROR to R.string.error_service,
+            DataError.Network.SERVICE_UNAVAILABLE to R.string.error_service,
+            DataError.Local.DISK_FULL to R.string.error_disk_full,
+            DataError.Local.UNKNOWN to R.string.error_storage,
+        )
+        for ((error, resource) in cases) assertEquals(resource, (CatalogPagingException(error).toPagingUiText() as UiText.Resource).id)
+        assertEquals(R.string.error_storage, (IllegalStateException("secret").toPagingUiText() as UiText.Resource).id)
+    }
+
+    @Test fun cachedStreamReusesRepositoryWorkAcrossCollectors() = runTest(dispatcher) {
+        val vm = vm()
         assertEquals(0, repository.collections)
-        val firstCollector = backgroundScope.launch { vm.state.collect() }
-        runCurrent()
-        assertEquals(1, repository.requests)
-        assertEquals(1, repository.collections)
-        firstCollector.cancel()
-        advanceTimeBy(5_001)
-        runCurrent()
-        repository.local.value = listOf(Movie(1, "Stored while away", null))
-        backgroundScope.launch { vm.state.collect() }
-        runCurrent()
-        assertEquals("Stored while away", vm.state.value.movies.single().title)
-        assertEquals(1, repository.requests)
+        assertEquals(listOf("Arrival"), vm.movies.asSnapshot().map { it.title })
+        assertEquals(listOf("Arrival"), vm.movies.asSnapshot().map { it.title })
+        assertEquals(1, repository.streams)
         assertEquals(1, repository.collections)
     }
 
-    @Test
-    fun loadingGuardIgnoresActionsBeforeTheRequestCoroutineStarts() = runTest {
-        val vm = viewModel()
+    @Test fun reconnectIgnoresInitialAndDuplicatesAndStopsWithEventCollection() = runTest(dispatcher) {
+        val vm = vm()
+        val events = mutableListOf<MovieListEvent>()
+        val collector = backgroundScope.launch { vm.events.collect { events += it } }
         runCurrent()
-        repository.refresh = { delay(100); Result.Success(Unit) }
-        vm.onAction(MovieListAction.OnRefreshClick)
-        vm.onAction(MovieListAction.OnRefreshClick)
-        vm.onAction(MovieListAction.OnRetryClick)
+        assertEquals(1, connectivity.collectors)
+        assertTrue(events.isEmpty())
+        connectivity.status.value = false
         runCurrent()
-        assertEquals(2, repository.requests)
-        advanceUntilIdle()
-        assertFalse(vm.state.value.isLoading)
-        assertEquals(2, repository.requests)
+        connectivity.status.value = true
+        runCurrent()
+        assertEquals(listOf(MovieListEvent.RefreshMovies), events)
+        vm.onAction(loads(hasItems = true))
+        connectivity.status.value = true
+        runCurrent()
+        assertEquals(1, events.size)
+        collector.cancel()
+        runCurrent()
+        assertEquals(0, connectivity.collectors)
+        connectivity.status.value = false
+        runCurrent()
+        connectivity.status.value = true
+        backgroundScope.launch { vm.events.collect { events += it } }
+        runCurrent()
+        assertEquals(1, events.size)
+        store.clear()
+        runCurrent()
+        assertEquals(0, connectivity.collectors)
     }
 
-    @Test
-    fun retryRestartsACancelledObserverWithoutReportingAnOrdinaryError() = runTest {
-        repository.read = { flow { throw CancellationException("fixture read cancellation") } }
-        val vm = viewModel()
+    @Test fun reconnectWithoutEventCollectionIsNotObservedOrQueuedForResume() = runTest(dispatcher) {
+        val vm = vm()
         runCurrent()
-        assertFalse(vm.state.value.isLoading)
-        assertNull(vm.state.value.error)
-
-        repository.local.value = listOf(Movie(1, "Recovered", null))
-        repository.read = { repository.local }
-        vm.onAction(MovieListAction.OnRetryClick)
+        assertEquals(0, connectivity.collectors)
+        connectivity.status.value = false
         runCurrent()
-        assertFalse(vm.state.value.isLoading)
-        assertNull(vm.state.value.error)
-        assertEquals("Recovered", vm.state.value.movies.single().title)
-        assertEquals(2, repository.collections)
-        assertEquals(2, repository.requests)
+        connectivity.status.value = true
+        runCurrent()
+        val events = mutableListOf<MovieListEvent>()
+        backgroundScope.launch { vm.events.collect { events += it } }
+        runCurrent()
+        assertTrue(events.isEmpty())
+        assertFalse(vm.state.value.isRefreshing)
     }
 
-    @Test
-    fun cancellationFinishesLoadingWithoutAnOrdinaryErrorAndAllowsLaterRetry() = runTest {
-        repository.refresh = { throw CancellationException("fixture cancellation") }
-        val vm = viewModel()
+    @Test fun connectivityObservationEndingLeavesCachedMoviesAndExplicitRecoveryAvailable() = runTest(dispatcher) {
+        val vm = vm(object : ConnectivityObserver {
+            override val isConnected = flowOf(false)
+        })
+        val events = mutableListOf<MovieListEvent>()
+        val collector = backgroundScope.launch { vm.events.collect { events += it } }
         runCurrent()
-        assertFalse(vm.state.value.isLoading)
-        assertNull(vm.state.value.error)
-        val cancelled = CompletableDeferred<Unit>()
-        repository.refresh = {
-            try {
+
+        assertTrue(collector.isActive)
+        assertTrue(events.isEmpty())
+        assertEquals(listOf("Arrival"), vm.movies.asSnapshot().map { it.title })
+
+        vm.onAction(loads(remote = LoadState.Error(CatalogPagingException(DataError.Network.NO_INTERNET)), hasItems = true))
+        vm.onAction(MovieListAction.OnRetryClick)
+        runCurrent()
+        assertEquals(listOf(MovieListEvent.RetryMovies), events)
+
+        vm.onAction(loads(hasItems = true))
+        vm.onAction(MovieListAction.OnRefreshClick)
+        runCurrent()
+        assertEquals(listOf(MovieListEvent.RetryMovies, MovieListEvent.RefreshMovies), events)
+        assertTrue(collector.isActive)
+    }
+
+    @Test fun reconnectDuringCollectorStartupWaitsForReceiverInsteadOfDroppingRefresh() = runTest(dispatcher) {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val vm = vm(object : ConnectivityObserver {
+            override val isConnected = flow {
+                emit(false)
+                emit(true)
                 awaitCancellation()
-            } finally {
-                cancelled.complete(Unit)
+            }
+        })
+        val events = mutableListOf<MovieListEvent>()
+        backgroundScope.launch { vm.events.collect { events += it } }
+        runCurrent()
+        assertEquals(listOf(MovieListEvent.RefreshMovies), events)
+        assertTrue(vm.state.value.isRefreshing)
+    }
+
+    @Test fun stoppingEventCollectionCancelsReconnectWaitingForBusyReceiver() = runTest(dispatcher) {
+        val vm = vm()
+        var received = 0
+        val collector = backgroundScope.launch {
+            vm.events.collect {
+                received++
+                awaitCancellation()
             }
         }
-        vm.onAction(MovieListAction.OnRetryClick)
         runCurrent()
-        assertTrue(vm.state.value.isLoading)
-        assertEquals(2, repository.requests)
-        store.clear()
+        connectivity.status.value = false
         runCurrent()
-        assertTrue(cancelled.isCompleted)
-        assertNull(vm.state.value.error)
-    }
+        connectivity.status.value = true
+        runCurrent()
+        assertEquals(1, received)
 
-    @Test
-    fun clearingViewModelCancelsTheActiveLocalRead() = runTest {
-        val cancelled = CompletableDeferred<Unit>()
-        repository.read = {
-            flow {
-                try {
-                    awaitCancellation()
-                } finally {
-                    cancelled.complete(Unit)
-                }
-            }
-        }
-        val vm = viewModel()
+        vm.onAction(loads(hasItems = true))
+        connectivity.status.value = false
         runCurrent()
-        assertTrue(vm.state.value.isLoading)
-        store.clear()
+        connectivity.status.value = true
         runCurrent()
-        assertTrue(cancelled.isCompleted)
-        assertNull(vm.state.value.error)
-    }
+        assertFalse(vm.state.value.isRefreshing)
+        collector.cancel()
+        runCurrent()
+        assertEquals(0, connectivity.collectors)
 
-    private fun TestScope.viewModel(): MovieListViewModel = MovieListViewModel(repository).also {
-        store.put("movie-list", it)
-        backgroundScope.launch { it.state.collect() }
-    }
-
-    private fun assertError(vm: MovieListViewModel, resourceId: Int) {
-        assertEquals(resourceId, (vm.state.value.error as UiText.Resource).id)
+        val resumedEvents = mutableListOf<MovieListEvent>()
+        backgroundScope.launch { vm.events.collect { resumedEvents += it } }
+        runCurrent()
+        assertTrue(resumedEvents.isEmpty())
+        assertFalse(vm.state.value.isRefreshing)
     }
 }
 
+private val idle = LoadState.NotLoading(false)
+private fun loads(
+    source: LoadState = idle,
+    remote: LoadState = idle,
+    sourceAppend: LoadState = idle,
+    remoteAppend: LoadState = idle,
+    hasItems: Boolean = false,
+): MovieListAction.OnLoadStatesChanged {
+    val local = LoadStates(source, idle, sourceAppend)
+    val mediator = LoadStates(remote, idle, remoteAppend)
+    return MovieListAction.OnLoadStatesChanged(CombinedLoadStates(remote, idle, remoteAppend, local, mediator), hasItems)
+}
+
 private class FakeCatalogRepository : CatalogRepository {
-    var requests = 0
+    var streams = 0
     var collections = 0
-    val local = MutableStateFlow<List<Movie>>(emptyList())
-    var read: () -> Flow<List<Movie>> = { local }
-    var refresh: suspend () -> EmptyResult<DataError> = { Result.Success(Unit) }
-
-    override suspend fun fetchMovies(page: Int): EmptyResult<DataError> {
-        assertEquals(1, page)
-        requests++
-        return refresh()
+    override fun getPagedMovies(): Flow<PagingData<Movie>> {
+        streams++
+        return flow {
+            collections++
+            emit(PagingData.from(listOf(Movie(1, "Arrival", null)), sourceLoadStates = LoadStates(idle, LoadState.NotLoading(true), LoadState.NotLoading(true))))
+        }
     }
+}
 
-    override fun getMovies(): Flow<List<Movie>> = flow {
-        collections++
-        emitAll(read())
-    }
+private class FakeConnectivityObserver : ConnectivityObserver {
+    val status = MutableStateFlow(true)
+    var collectors = 0
+    override val isConnected: Flow<Boolean> = flow {
+        collectors++
+        try { status.collect { emit(it) } } finally { collectors-- }
+    }.distinctUntilChanged()
 }

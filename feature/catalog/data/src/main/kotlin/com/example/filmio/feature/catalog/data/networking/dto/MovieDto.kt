@@ -2,7 +2,11 @@ package com.example.filmio.feature.catalog.data.networking.dto
 
 import com.squareup.moshi.Json
 
-data class PopularMoviesResponseDto(val page: Int, val results: List<MovieDto?>)
+data class PopularMoviesResponseDto(
+    val page: Int,
+    val results: List<MovieDto?>,
+    @param:Json(name = "total_pages") val totalPages: Int? = null,
+)
 
 data class MovieDto(
     val id: Long,

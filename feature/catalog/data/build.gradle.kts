@@ -41,6 +41,7 @@ dependencies {
     // JVM data tests
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.paging.testing)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.mockito.subclass)
 }

@@ -1,154 +1,166 @@
 package com.example.filmio.feature.catalog.data
 
-import android.database.sqlite.SQLiteFullException
-import androidx.paging.PagingSource
-import androidx.sqlite.db.SupportSQLiteQuery
-import com.example.filmio.core.domain.DataError
-import com.example.filmio.core.domain.Result
-import com.example.filmio.feature.catalog.data.networking.TmdbService
+import androidx.paging.LoadState
+import androidx.paging.PagingDataEvent
+import androidx.paging.PagingDataPresenter
+import androidx.paging.cachedIn
+import androidx.paging.testing.asSnapshot
 import com.example.filmio.feature.catalog.data.networking.dto.MovieDto
 import com.example.filmio.feature.catalog.data.networking.dto.PopularMoviesResponseDto
+import com.example.filmio.feature.catalog.data.paging.FakeMovieDao
+import com.example.filmio.feature.catalog.data.paging.FakeTmdbService
+import com.example.filmio.feature.catalog.data.paging.cachedMovie
 import com.example.filmio.feature.catalog.data.repository.OfflineFirstCatalogRepository
-import com.example.filmio.feature.catalog.database.dao.MovieDao
-import com.example.filmio.feature.catalog.database.entities.MovieEntity
+import com.example.filmio.feature.catalog.domain.model.Movie
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.fail
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.net.UnknownHostException
 import java.time.Clock
-import java.time.Instant
-import java.time.ZoneOffset
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CatalogRepositoryTest {
-    private val clock = Clock.fixed(Instant.ofEpochMilli(123), ZoneOffset.UTC)
+    private val dispatcher = StandardTestDispatcher()
     private val dao = FakeMovieDao()
-    private var calls = 0
-    private val pages = mutableListOf<Int>()
-    private var remote: suspend (Int) -> PopularMoviesResponseDto = { page -> PopularMoviesResponseDto(page, listOf(MovieDto(1, "Remote"))) }
-    private val service = object : TmdbService {
-        override suspend fun getPopularMovies(page: Int, language: String): PopularMoviesResponseDto {
-            assertEquals("en-US", language)
-            pages += page
-            calls++
-            return remote(page)
+    private val service = FakeTmdbService()
+    private fun repository() = OfflineFirstCatalogRepository(service, dao, Clock.systemUTC())
+    @Before fun setup() { Dispatchers.setMain(dispatcher) }
+    @After fun cleanup() { Dispatchers.resetMain() }
+
+    @Test fun initialLocalCacheBoundaryCanAppendBeforeItemAccess() = runTest(dispatcher) {
+        service.respond = { page ->
+            PopularMoviesResponseDto(page, if (page == 1) (1L..20L).map { MovieDto(it, "Movie %03d".format(it)) } else emptyList())
         }
-    }
-    private fun repository() = OfflineFirstCatalogRepository(service, dao, clock)
-
-    @Test fun networkFailureAndMismatchedPageNeverInvokeWriter() = runTest {
-        dao.rows.value = listOf(entity("Cached"))
-        remote = { throw UnknownHostException() }
-        assertEquals(Result.Error(DataError.Network.NO_INTERNET), repository().fetchMovies(page = 1))
-        remote = { PopularMoviesResponseDto(2, emptyList()) }
-        assertEquals(Result.Error(DataError.Network.SERIALIZATION), repository().fetchMovies(page = 1))
-        assertEquals(0, dao.writes)
-        assertEquals("Cached", dao.rows.value.single().title)
-    }
-
-    @Test fun observationShowsCachedAndCommittedContentDuringRefresh() = runTest {
-        val repository = repository()
-        dao.rows.value = listOf(entity("Cached"))
-        val stream = repository.getMovies()
-        assertEquals("Cached", stream.first().single().title)
-        assertEquals(0, calls)
-        val networkGate = CompletableDeferred<Unit>()
-        val commitGate = CompletableDeferred<Unit>()
-        remote = { networkGate.await(); PopularMoviesResponseDto(1, listOf(MovieDto(1, "Remote"))) }
-        dao.beforeWrite = { commitGate.await() }
-        val refresh = async { repository.fetchMovies(page = 1) }
-        runCurrent()
-        assertEquals("Cached", stream.first().single().title)
-        networkGate.complete(Unit); runCurrent()
-        assertFalse(refresh.isCompleted)
-        assertEquals("Cached", stream.first().single().title)
-        commitGate.complete(Unit)
-        assertEquals(Result.Success(Unit), refresh.await())
-        assertEquals("Remote", stream.first().single().title)
-        assertEquals(123L, dao.rows.value.single().updatedAtEpochMillis)
-        dao.rows.value = listOf(entity("Direct local write"))
-        assertEquals("Direct local write", stream.first().single().title)
-    }
-
-    @Test fun cancellationAndWriteFailureKeepPreviouslyStoredRows() = runTest {
-        val repository = repository()
-        dao.rows.value = listOf(entity("Cached"))
-        remote = { awaitCancellation() }
-        val job = launch { repository.fetchMovies(page = 1) }
-        runCurrent()
-        job.cancelAndJoin()
-        assertEquals(0, dao.writes)
-        remote = { PopularMoviesResponseDto(1, listOf(MovieDto(1, "Uncommitted"))) }
-        dao.beforeWrite = { throw IllegalStateException("writer failure") }
-        try {
-            repository.fetchMovies(page = 1)
-            fail("Expected local write failure")
-        } catch (_: IllegalStateException) { }
-        assertEquals("Cached", dao.rows.value.single().title)
-        assertEquals(0, dao.writes)
-    }
-
-    @Test fun forwardsRequestedPagesAndCoercesNonpositivePagesToOne() = runTest {
-        val repository = repository()
-        for (page in listOf(2, 0)) {
-            assertEquals(Result.Success(Unit), repository.fetchMovies(page))
+        val presenter = object : PagingDataPresenter<Movie>(dispatcher) {
+            override suspend fun presentPagingDataEvent(event: PagingDataEvent<Movie>) = Unit
         }
-        assertEquals(listOf(2, 1), pages)
-        assertEquals(2, dao.writes)
+        backgroundScope.launch { repository().getPagedMovies().collectLatest { presenter.collectFrom(it) } }
+        runCurrent()
+        assertEquals(listOf(1, 2), service.pages)
+        assertEquals(20, presenter.size)
+        assertEquals(1, service.maxInFlight)
     }
 
-    @Test fun sqliteWriteFailureReturnsLocalErrorAndKeepsPreviouslyStoredRows() = runTest {
-        dao.rows.value = listOf(entity("Cached"))
-        dao.beforeWrite = { throw mock(SQLiteFullException::class.java) }
-
-        assertEquals(Result.Error(DataError.Local.DISK_FULL), repository().fetchMovies(page = 1))
-        assertEquals("Cached", dao.rows.value.single().title)
-        assertEquals(0, dao.writes)
+    @Test fun fullPipelineContinuesThroughNullAndDuplicatePagesToUsableRows() = runTest(dispatcher) {
+        service.respond = { page ->
+            when (page) {
+                1 -> PopularMoviesResponseDto(page, listOf(MovieDto(1, "Arrival")))
+                2 -> PopularMoviesResponseDto(page, listOf(null))
+                3 -> PopularMoviesResponseDto(page, listOf(MovieDto(1, "Arrival")))
+                else -> PopularMoviesResponseDto(page, listOf(MovieDto(2, "Zodiac")), totalPages = 4)
+            }
+        }
+        val snapshot = repository().getPagedMovies().asSnapshot { scrollTo(10) }
+        assertEquals(listOf("Arrival", "Zodiac"), snapshot.map { it.title })
+        assertEquals(listOf(1, 2, 3, 4), service.pages)
+        assertEquals(1, service.maxInFlight)
     }
 
-    @Test fun commitsNonnullSummariesFromTheRequestedPage() = runTest {
-        remote = { page -> PopularMoviesResponseDto(page, listOf(
-            MovieDto(1, " Title ", "", voteAverage = 0.0), null, MovieDto(2, "Second"),
-        )) }
-        assertEquals(Result.Success(Unit), repository().fetchMovies(page = 2))
-        assertEquals(listOf(" Title ", "Second"), dao.rows.value.map { it.title })
-        assertEquals("", dao.rows.value.first().overview)
-        assertEquals(0.0, dao.rows.value.first().voteAverage!!, 0.0)
-        assertEquals(setOf(123L), dao.rows.value.map { it.updatedAtEpochMillis }.toSet())
-        assertEquals(1, dao.writes)
+    @Test fun localPagingReadsRemainingBatchesBeforeRemoteAppendAndKeepsCacheDuringPendingRefresh() = runTest(dispatcher) {
+        dao.rows.value = (1L..60L).map { cachedMovie(it) }
+        val gate = CompletableDeferred<Unit>()
+        service.respond = { page -> gate.await(); PopularMoviesResponseDto(page, listOf(MovieDto(1, "Movie 001"))) }
+        val presenter = object : PagingDataPresenter<Movie>(dispatcher) {
+            override suspend fun presentPagingDataEvent(event: PagingDataEvent<Movie>) = Unit
+        }
+        backgroundScope.launch { repository().getPagedMovies().collectLatest { presenter.collectFrom(it) } }
+        runCurrent()
+        assertEquals(20, presenter.size)
+        assertEquals(listOf(1), service.pages)
+        gate.complete(Unit)
+        runCurrent()
+        presenter[19]
+        runCurrent()
+        assertEquals(40, presenter.size)
+        assertEquals(listOf(1), service.pages)
+        val appendGate = CompletableDeferred<Unit>()
+        service.respond = { page ->
+            // Paging exhausts the final local batch before asking the mediator for another page.
+            assertTrue(dao.localLoads.contains(40))
+            appendGate.await()
+            PopularMoviesResponseDto(page, emptyList())
+        }
+        presenter[39]
+        runCurrent()
+        assertEquals(60, presenter.size)
+        assertEquals(listOf(1, 2), service.pages)
+        repeat(10) { presenter[presenter.size - 1] }
+        runCurrent()
+        assertEquals(listOf(1, 2), service.pages)
+        assertEquals(1, service.maxInFlight)
+        appendGate.complete(Unit)
+        runCurrent()
     }
 
-    private fun entity(title: String) = MovieEntity(1, title, null, null, null, null, null, null, null, null, 0)
-}
+    @Test fun pagingRetryRepeatsFailedAppendWhileRefreshRestartsAtOne() = runTest(dispatcher) {
+        dao.rows.value = (1L..20L).map { cachedMovie(it) }
+        service.respond = { page ->
+            if (page == 2) throw UnknownHostException()
+            PopularMoviesResponseDto(page, listOf(MovieDto(1, "Movie 001")))
+        }
+        val presenter = object : PagingDataPresenter<Movie>(dispatcher) {
+            override suspend fun presentPagingDataEvent(event: PagingDataEvent<Movie>) = Unit
+        }
+        backgroundScope.launch { repository().getPagedMovies().collectLatest { presenter.collectFrom(it) } }
+        runCurrent()
+        presenter[19]
+        runCurrent()
+        assertTrue(presenter.loadStateFlow.value!!.mediator!!.append is LoadState.Error)
+        repeat(10) { presenter[19] }
+        runCurrent()
+        assertEquals(listOf(1, 2), service.pages)
+        service.respond = { page -> PopularMoviesResponseDto(page, emptyList()) }
+        presenter.retry()
+        runCurrent()
+        assertEquals(listOf(1, 2, 2), service.pages)
+        assertEquals(20, presenter.size)
+        presenter.refresh()
+        runCurrent()
+        assertEquals(listOf(1, 2, 2, 1), service.pages)
+        assertEquals(20, dao.rows.value.size)
+        assertTrue(presenter.snapshot().items.isNotEmpty())
+    }
 
-private class FakeMovieDao : MovieDao() {
-    val rows = MutableStateFlow<List<MovieEntity>>(emptyList())
-    var writes = 0
-    var beforeWrite: suspend () -> Unit = { }
-    override fun observeMovies(): Flow<List<MovieEntity>> = flow {
-        emitAll(rows)
+    @Test fun repeatedRefreshRetainsAbsoluteAnchorWhenPlaceholdersAreDisabled() = runTest(dispatcher) {
+        dao.rows.value = (1L..60L).map { cachedMovie(it) }
+        service.respond = { page -> PopularMoviesResponseDto(page, listOf(MovieDto(1, "Movie 001")), totalPages = 1) }
+        val presenter = object : PagingDataPresenter<Movie>(dispatcher) {
+            override suspend fun presentPagingDataEvent(event: PagingDataEvent<Movie>) = Unit
+        }
+        backgroundScope.launch { repository().getPagedMovies().collectLatest { presenter.collectFrom(it) } }
+        runCurrent()
+        presenter[19]; runCurrent()
+        presenter[39]; runCurrent()
+        presenter[59]; runCurrent()
+        repeat(3) {
+            presenter.refresh()
+            runCurrent()
+            assertEquals(60L, presenter.snapshot().items.last().id)
+            presenter[presenter.size - 1]
+            runCurrent()
+        }
+        assertEquals(listOf(1, 1, 1, 1), service.pages)
     }
-    override suspend fun upsertMovies(movies: List<MovieEntity>) {
-        beforeWrite()
-        writes++
-        rows.value = (rows.value + movies).associateBy { it.id }.values.toList()
+
+    @Test fun cachedStreamRecollectionReusesGenerationAndNewStreamStartsAtOne() = runTest(dispatcher) {
+        service.respond = { page -> PopularMoviesResponseDto(page, listOf(MovieDto(1, "Arrival")), totalPages = 1) }
+        val repository = repository()
+        val cached = repository.getPagedMovies().cachedIn(backgroundScope)
+        assertEquals(1, cached.asSnapshot().size)
+        assertEquals(1, cached.asSnapshot().size)
+        assertEquals(listOf(1), service.pages)
+        assertEquals(1, repository.getPagedMovies().asSnapshot().size)
+        assertEquals(listOf(1, 1), service.pages)
     }
-    override suspend fun getMovie(movieId: Long) = rows.value.find { it.id == movieId }
-    override fun pagingSource(): PagingSource<Int, MovieEntity> = error("Unused")
-    override fun searchPagingSource(query: SupportSQLiteQuery): PagingSource<Int, MovieEntity> = error("Unused")
 }

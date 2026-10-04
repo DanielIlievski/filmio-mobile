@@ -1,10 +1,9 @@
 # Filmio
 
 Android-only Kotlin TMDB assignment using Clean Architecture, MVI, Compose Material 3,
-Retrofit/OkHttp/Moshi, Room, and Koin. The current runnable slice loads **page 1** of
-popular movies and displays the entire stored catalog in local alphabetical order.
-It shows titles and descriptions, supports explicit Refresh/Retry, and preserves
-cached content during failures and after process restart.
+Retrofit/OkHttp/Moshi, Room, Paging 3, and Koin. The runnable list displays committed
+movies in local alphabetical order, pages through TMDB popular movies, supports
+Refresh/Retry and active reconnect, and keeps cached content usable offline.
 
 ## Setup
 
@@ -35,86 +34,91 @@ do not print private properties, headers, tokens, or remote error bodies.
 
 ## Design and current scope
 
-- `catalog:domain` exposes `Movie` and `CatalogRepository`.
-  `fetchMovies(page): EmptyResult<DataError>` returns commit success or a
-  typed network/local write error. `getMovies(): Flow<List<Movie>>`
-  reads committed local rows.
-  There are no artificial domain rules or forwarding UseCases to unit-test here.
-- `catalog:data` owns the one Retrofit service, DTO decoding/mapping, the network
-  stack, and `OfflineFirstCatalogRepository`. Refresh concurrency is guarded by
-  the ViewModel. The repository forwards the requested page (nonpositive values use
-  page 1), rejects mismatched response pages, skips null entries, and maps summaries
-  into an atomic additive DAO upsert. Each batch shares one timestamp. Empty responses
-  retain content; duplicate IDs use the last occurrence.
-- `core:data` remains Kotlin/JVM and owns `safeCall`. Android SQLite write-error
-  translation belongs to catalog data's internal `safeDatabaseUpdate` helper.
-- `catalog:database` owns the five-table Room v1 schema, queries/transactions, and
-  `createCatalogDatabase(context)` using application context and `filmio-catalog.db`.
-  Summary refreshes preserve omitted movies, details, owned metadata, and favorites.
-- `catalog:presentation` starts observation and one initial refresh when state is
-  first collected. State contains movies, one nullable error, and one loading flag;
-  `_state.value.isLoading` guards repeated refresh inputs. Cached titles remain visible.
-  Refresh/Retry request page 1. UI items come only from Room observation, and successful
-  refresh produces no confirmation. Local-read failure handling/recovery is deferred.
-- `app` assembles the persistent database/DAO, BuildConfig configuration, feature Koin
-  modules, Application startup, and the temporary screen under the existing theme.
+- `catalog:domain` exposes `Movie`, `CatalogRepository.getPagedMovies(): Flow<PagingData<Movie>>`,
+  a safe `CatalogPagingException(DataError)` carrier, and a connectivity Flow contract.
+  There are no artificial domain rules or forwarding UseCases.
+- `catalog:data` builds one Pager/mediator per stream. Room supplies every displayed
+  item. `PopularMoviesRemoteMediator` starts at page 1, appends sequentially, and has
+  no remote PREPEND. It validates response pages and advances its in-memory continuation
+  only after atomic commit and cancellation checks. Retry repeats a failed page;
+  Refresh restarts at 1. Empty raw results, reported last page, and page 500 stop remote loads.
+- Local page/initial sizes are 20, placeholders are disabled, and prefetch distance is 1.
+  Native Paging cache-boundary loading can fetch the next remote page as soon as a local
+  load reaches the database end, including page 2 before scrolling on a small initial cache.
+  Longer caches load remaining local batches first. There is no manual scroll paginator.
+  All-null nonterminal batches explicitly invalidate the current source. An offset adapter
+  preserves absolute Room refresh anchors when the presenter omits leading placeholders.
+- `catalog:database` owns five Room v1 tables and persistent `filmio-catalog.db`.
+  Refresh/append add or update summaries without deleting omitted movies, details, or
+  favorites. Duplicate IDs use the last supplied values; null entries are skipped;
+  a batch shares one clock timestamp. The schema and DAO SQL are unchanged.
+- `core:data` owns shared Retrofit failure mapping. Catalog data maps expected SQLite
+  write errors; cancellation and unexpected defects propagate. Presentation localizes
+  the safe typed errors and uses generic storage feedback for unrecognized source failures.
+- `catalog:presentation` caches one stream in the ViewModel. Its state projects source
+  and mediator loading/errors plus confirmed empty, without mirroring the movie list or
+  fetching pages independently. Empty requires successful local and remote refresh outcomes.
+  Refresh and Retry emit distinct commands through `ObserveAsEvents` to the active
+  root's same Paging collection.
+  Indexed rows use stable ID keys and remembered list state, retaining content during
+  loading/failure, with append progress/error footers and no success confirmation.
+- Active-screen default-network observation refreshes on unavailable-to-available
+  transitions. Initial/duplicate connected status is ignored. Event collection starts
+  the ViewModel's observation Job and cancels it on completion. Unbuffered reconnect
+  sends wait for a receiver and are canceled when collection stops, so startup order
+  cannot drop a reconnect and stopped screens retain no pending reconnect command.
+  Registration failure leaves manual recovery usable.
+- `app` assembles persistent storage, private BuildConfig configuration, existing Koin
+  modules, and the single activity. No feature mapping or business logic lives here.
 
-Mapping preserves DTO values directly, including whitespace, nulls, blanks, and
-numeric zero. Moshi rejects malformed JSON or missing required fields; a response
-page must match the requested page before any write. Expected HTTP/transport/decoding
-failures reuse `safeCall`. Catalog data maps Android `SQLiteFullException` to
-`DataError.Local.DISK_FULL` and other `SQLiteException`s to `DataError.Local.UNKNOWN`.
-Fetch returns these write errors so presentation can show localized retry feedback
-while preserving content. Local read failures and unexpected defects still propagate;
-cancellation remains cancellation.
-The repository supports later pages; the current screen explicitly requests page 1
-until Paging integration connects scrolling to page loads.
-An empty read is successful local data, not a read error. With no loading/error, an
-empty list shows no stored movies; a typed refresh failure shows retry feedback instead.
-State resubscription restarts observation without repeating the initial request,
-and ViewModel clearing cancels both operations.
+Relaunch keeps the stored catalog and starts a new remote sequence at 1; cache size
+never determines a TMDB page number. Mapping preserves supplied whitespace, blanks,
+nulls, and numeric zero. Missing token does not add a credential-presence gate.
 
-This temporary screen is a single destination with text summaries. Final assignment
-work remains: infinite scroll using Room/Paging/RemoteMediator, posters, details with
-extended/author content, movie/series search with controllable request rate, and local
-favorite UI/operations. Automatic reconnect, background sync, and list freshness are
-also deferred. The selected eventual Room/search/offline contract still applies;
-this slice does not weaken it. Image paths alone do not guarantee offline artwork.
+The screen still uses text summaries. Posters, details with extended/author content,
+movie/series search with controllable request rate, and local favorite UI/operations
+remain assignment work. Background synchronization and list freshness are outside
+this change. Stored image paths alone do not guarantee offline artwork.
 
 ## Verification
 
-Automated testing is limited to focused local JVM unit tests. They use small fake
-DAOs/repositories and MockWebServer, plus test-only Mockito mocks for Android SQLite
-exception instances. They require no device or live TMDB token and cover
-network error mapping, catalog requests/decoding, repository coordination, and
-ViewModel states/retry/cancellation. Shared network cases are tested once in core
-data. Domain currently has no business rules requiring separate tests.
+Automated testing uses local JVM tests only: small boundary fakes, MockWebServer,
+virtual time, test-only Paging utilities, and Mockito-created SQLite exception
+instances. Tests cover commit/retry/cancellation, terminal metadata, no-row pages,
+local-before-remote paging, generation reuse, relative-anchor translation, safe
+load-state projection, commands, and reconnect lifecycle. Shared network classification
+is tested once in core data. Domain has no business rules requiring separate tests.
 
 ```sh
 ./gradlew :core:data:test :feature:catalog:data:testDebugUnitTest \
   :feature:catalog:presentation:testDebugUnitTest :app:assembleDebug
 ```
 
-These unit tests exercise our code at its boundaries; they do not verify real Room
-SQL/persistence or Compose interactions. Use the walkthrough below to check the app.
-The ViewModel suite still includes expectations for deferred local-read recovery and
-the earlier loading/cancellation behavior; the full suite currently needs alignment.
+Fakes do not prove Room SQL/atomicity, durable reopening, or Compose behavior.
+No automated emulator, screenshot, or mutation infrastructure is introduced.
 
 Manual walkthrough with private local configuration:
 
-1. Install/run online. Wait for initial loading to finish and verify stored titles
-   and descriptions appear after the page-1 batch commits.
-2. Tap Refresh. Titles remain visible during the attempt. Scroll through the list;
-   this slice makes no request for page 2 and uses the same page-1 scope on refresh.
-3. Force-stop the app, disable connectivity, and relaunch. Previously stored titles
-   remain readable while the new initial refresh fails with retry feedback.
-4. Tap Retry offline. Cached content remains unchanged after failure.
-5. Restore connectivity while the screen stays open. Reconnection alone triggers no
-   request; tap Retry explicitly to recover. Confirm the list still reflects
-   the locally observed catalog and the error clears.
+1. Install/run online. Confirm titles and descriptions after commit, then scroll
+   through successive local/remote batches. A small cache may eagerly fetch the next
+   remote page before scrolling, following native Paging scheduling.
+2. Disable connectivity at a subsequent boundary. Cached rows remain visible with
+   append Retry; scrolling alone does not continuously retry. Restore connectivity
+   or Retry a recoverable service failure. Append Retry repeats its failed page.
+3. Tap Refresh while scrolled. Cached rows remain visible and the remote sequence
+   restarts at 1. Check that stable IDs retain the viewport through alphabetical upserts.
+4. At a known terminal response, keep scrolling: no further append request should occur.
+   Refresh permits a new sequence. A controllable fixture is useful for finite responses.
+5. Force-stop, disable connectivity, and relaunch without clearing storage. Browse
+   previously cached rows and verify refresh failure/retry feedback. An uncached offline
+   installation should show unavailable feedback, never a confirmed empty message.
+6. Restore connectivity with the screen active: one page-1 reconnect refresh occurs.
+   Stop/resume the same screen online: there is no extra independent initial request.
+   Check callback release on stop and registration on resume. A successful empty
+   response with empty local storage should show only the confirmed empty message.
 
-Do not uninstall/clear app storage between offline relaunch steps. Preserve the
-exported schema; there is no destructive migration fallback.
+Do not uninstall/clear the normal app between cached offline steps. The exported
+schema is preserved; there is no destructive migration fallback.
 
 Endpoint/authentication references: [TMDB popular movies](https://developer.themoviedb.org/reference/movie-popular-list),
 [TMDB application authentication](https://developer.themoviedb.org/docs/authentication-application).

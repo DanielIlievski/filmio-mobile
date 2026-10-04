@@ -1,22 +1,20 @@
 package com.example.filmio.feature.catalog.data.repository
 
-import com.example.filmio.core.data.networking.safeCall
-import com.example.filmio.core.domain.DataError
-import com.example.filmio.core.domain.EmptyResult
-import com.example.filmio.core.domain.Result
-import com.example.filmio.core.domain.asEmptyResult
-import com.example.filmio.core.domain.onSuccess
-import com.example.filmio.feature.catalog.data.database.safeDatabaseUpdate
+import androidx.paging.ExperimentalPagingApi
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.PagingSource
+import androidx.paging.map
 import com.example.filmio.feature.catalog.data.mapping.toDomain
-import com.example.filmio.feature.catalog.data.mapping.toEntity
 import com.example.filmio.feature.catalog.data.networking.TmdbService
+import com.example.filmio.feature.catalog.data.paging.AnchoredMoviePagingSource
+import com.example.filmio.feature.catalog.data.paging.MoviesRemoteMediator
 import com.example.filmio.feature.catalog.database.dao.MovieDao
-import com.example.filmio.feature.catalog.domain.repository.CatalogRepository
+import com.example.filmio.feature.catalog.database.entities.MovieEntity
 import com.example.filmio.feature.catalog.domain.model.Movie
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
+import com.example.filmio.feature.catalog.domain.repository.CatalogRepository
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.time.Clock
 
@@ -26,31 +24,16 @@ class OfflineFirstCatalogRepository(
     private val clock: Clock,
 ) : CatalogRepository {
 
-    override suspend fun fetchMovies(page: Int): EmptyResult<DataError> {
-        val requestedPage = page.coerceAtLeast(2)
-
-        return safeCall { service.getPopularMovies(requestedPage, LANGUAGE) }
-            .onSuccess { moviesDto ->
-                if (moviesDto.page != requestedPage) return Result.Error(DataError.Network.SERIALIZATION)
-                val updatedAtEpochMillis = clock.millis()
-                val movieEntities = moviesDto.results.mapNotNull { movie ->
-                    movie?.toEntity(updatedAtEpochMillis)
-                }
-                currentCoroutineContext().ensureActive()
-
-                return safeDatabaseUpdate {
-                    movieDao.upsertMovies(movieEntities)
-                }
-            }
-            .asEmptyResult()
+    @OptIn(ExperimentalPagingApi::class)
+    override fun getPagedMovies(): Flow<PagingData<Movie>> {
+        var activeSource: PagingSource<Int, MovieEntity>? = null
+        val mediator = MoviesRemoteMediator(service, movieDao, clock) { activeSource?.invalidate() }
+        return Pager(
+            config = PagingConfig(pageSize = 20, initialLoadSize = 20, enablePlaceholders = false, prefetchDistance = 1),
+            remoteMediator = mediator,
+            pagingSourceFactory = { AnchoredMoviePagingSource(movieDao.pagingSource()).also { activeSource = it } },
+        ).flow.map { data ->
+            data.map { it.toDomain() }
+        }
     }
-
-    override fun getMovies(): Flow<List<Movie>> =
-        movieDao.observeMovies()
-            .map { movies ->
-                movies.map { it.toDomain() }
-            }
-            .distinctUntilChanged()
 }
-
-private const val LANGUAGE = "en-US"

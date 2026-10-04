@@ -2,6 +2,8 @@
     <string name="stored_movies">Stored movies</string>
     <string name="refresh">Refresh</string>
     <string name="retry">Retry</string>
+    <string name="refreshing_movies">Refreshing movies…</string>
+    <string name="loading_more_movies">Loading more movies…</string>
     <string name="loading_movies">Loading movies…</string>
     <string name="no_description">No description available.</string>
     <string name="empty_movies">No stored movies.</string>
