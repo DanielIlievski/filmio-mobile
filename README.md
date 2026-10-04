@@ -3,7 +3,8 @@
 Android-only Kotlin TMDB assignment using Clean Architecture, MVI, Compose Material 3,
 Retrofit/OkHttp/Moshi, Room, Paging 3, and Koin. The runnable list displays committed
 movies in local alphabetical order, pages through TMDB popular movies, supports
-Refresh/Retry and active reconnect, and keeps cached content usable offline.
+Refresh/Retry and active reconnect, and keeps cached content usable offline. Selecting a
+movie opens a restorable text detail screen backed by the same persistent catalog.
 
 ## Setup
 
@@ -38,7 +39,7 @@ do not print private properties, headers, tokens, or remote error bodies.
   a safe `CatalogPagingException(DataError)` carrier, and a connectivity Flow contract.
   There are no artificial domain rules or forwarding UseCases.
 - `catalog:data` builds one Pager/mediator per stream. Room supplies every displayed
-  item. `PopularMoviesRemoteMediator` starts at page 1, appends sequentially, and has
+  item. `MoviesRemoteMediator` starts at page 1, appends sequentially, and has
   no remote PREPEND. It validates response pages and advances its in-memory continuation
   only after atomic commit and cancellation checks. Retry repeats a failed page;
   Refresh restarts at 1. Empty raw results, reported last page, and page 500 stop remote loads.
@@ -68,15 +69,32 @@ do not print private properties, headers, tokens, or remote error bodies.
   sends wait for a receiver and are canceled when collection stops, so startup order
   cannot drop a reconnect and stopped screens retain no pending reconnect command.
   Registration failure leaves manual recovery usable.
+- Detail observation is local-only: absent movie, summary-only, and fetched-but-unknown
+  metadata remain distinct. `fetchMovieDetails` returns only completion/error after a
+  validated atomic snapshot commit. Selected null values and empty child lists replace
+  previous metadata; zero and 64-bit monetary values are preserved. Details, the list,
+  and favorites share one canonical movie.
+- Every detail entry fetches the latest API data while showing any stored summary/details.
+  Local observation and fetching proceed independently, and content updates only through
+  Room. The injected clock supplies commit timestamps.
+- A detail ViewModel prevents overlapping work and repeats entry fetching only for a new
+  destination. Expected local-read errors use a safe domain exception and terminate
+  observation. The last movie stays visible, and storage feedback takes precedence. Active reconnect restarts failed observation and fetches
+  again; command success cannot clear a read error or provide direct network content.
+  Detail state has one `isLoading` flag and one nullable `error: UiText?`. Back is its only action.
+  Popping cancels owned work; reopening fetches again.
 - `app` assembles persistent storage, private BuildConfig configuration, existing Koin
-  modules, and the single activity. No feature mapping or business logic lives here.
+  modules, and a single-activity Navigation 3 host. Serializable list/detail keys save only
+  movie identity. Entry decorators retain each ViewModel; Back reuses the list's Paging
+  generation. No feature mapping or business logic lives here.
 
 Relaunch keeps the stored catalog and starts a new remote sequence at 1; cache size
 never determines a TMDB page number. Mapping preserves supplied whitespace, blanks,
 nulls, and numeric zero. Missing token does not add a credential-presence gate.
 
-The screen still uses text summaries. Posters, details with extended/author content,
-movie/series search with controllable request rate, and local favorite UI/operations
+The list and detail screens use text. Details include ratings/votes and selected runtime,
+release, genre, company, collection, and other metadata with unknown-value fallbacks.
+Posters, credits/review authors, movie/series search with controllable request rate, and local favorite UI/operations
 remain assignment work. Background synchronization and list freshness are outside
 this change. Stored image paths alone do not guarantee offline artwork.
 
@@ -86,12 +104,15 @@ Automated testing uses local JVM tests only: small boundary fakes, MockWebServer
 virtual time, test-only Paging utilities, and Mockito-created SQLite exception
 instances. Tests cover commit/retry/cancellation, terminal metadata, no-row pages,
 local-before-remote paging, generation reuse, relative-anchor translation, safe
-load-state projection, commands, and reconnect lifecycle. Shared network classification
+load-state projection, commands, and reconnect lifecycle. Detail tests additionally cover
+strict decoding, complete mapping, unconditional fetching, expected read/write errors,
+cache preservation, commit ordering, local-only observations, read recovery, immutable
+IDs, loading/observer scheduling, reconnect recovery, Back, and entry cancellation. Shared network classification
 is tested once in core data. Domain has no business rules requiring separate tests.
 
 ```sh
 ./gradlew :core:data:test :feature:catalog:data:testDebugUnitTest \
-  :feature:catalog:presentation:testDebugUnitTest :app:assembleDebug
+  :feature:catalog:presentation:testDebugUnitTest :feature:catalog:database:assembleDebug :app:assembleDebug
 ```
 
 Fakes do not prove Room SQL/atomicity, durable reopening, or Compose behavior.
@@ -117,8 +138,25 @@ Manual walkthrough with private local configuration:
    Check callback release on stop and registration on resume. A successful empty
    response with empty local storage should show only the confirmed empty message.
 
+7. Select a movie and confirm its ID, title, available ratings/votes, and extended fields.
+   While refreshing or offline, previously stored content stays visible. Summary-only
+   movies explicitly say extended details have not been fetched. Companies are production
+   companies. Back returns to the retained list; reopen the movie to fetch again while displaying its cached details.
+8. Confirm details expose Back without manual fetch controls, including during loading
+   or errors. Active reconnect fetches once, while leaving and resuming online does not
+   queue reconnect work. Recreate/background-kill the app with details open: restore the
+   selected ID, observe stored content, and fetch the latest details for the new screen.
+9. With seeded null/empty replacement and a favorite, verify detail-owned metadata clears
+   appropriately, favorites and their added times survive, and updated canonical summaries
+   appear on Back through Room invalidation. A subsequent popular write must preserve
+   detail-owned fields and fetched time. Keep source-read failure feedback separate from
+   fetch feedback; use the unit tests for controlled SQLite failures.
+
+The performed checks and their limits are recorded in [movie details verification](docs/verification/movie-details.md).
 Do not uninstall/clear the normal app between cached offline steps. The exported
 schema is preserved; there is no destructive migration fallback.
 
 Endpoint/authentication references: [TMDB popular movies](https://developer.themoviedb.org/reference/movie-popular-list),
-[TMDB application authentication](https://developer.themoviedb.org/docs/authentication-application).
+[TMDB application authentication](https://developer.themoviedb.org/docs/authentication-application),
+[TMDB movie details](https://developer.themoviedb.org/reference/movie-details), and
+[Navigation 3 state and ViewModel scoping](https://developer.android.com/guide/navigation/navigation-3/save-state).

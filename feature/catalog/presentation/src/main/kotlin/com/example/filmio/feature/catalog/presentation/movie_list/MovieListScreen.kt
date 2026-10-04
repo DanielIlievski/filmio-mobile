@@ -43,6 +43,7 @@ import org.koin.androidx.compose.koinViewModel
 
 @Composable
 fun MovieListRoot(
+    onNavigateToMovieDetail: (Long) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: MovieListViewModel = koinViewModel(),
 ) {
@@ -53,6 +54,7 @@ fun MovieListRoot(
         when (event) {
             MovieListEvent.RefreshMovies -> movies.refresh()
             MovieListEvent.RetryMovies -> movies.retry()
+            is MovieListEvent.NavigateToMovieDetail -> onNavigateToMovieDetail(event.movieId)
         }
     }
     ObservePagingLoadStates(viewModel, movies)
@@ -104,7 +106,7 @@ fun MovieListScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     items(count = movies.itemCount, key = movies.itemKey { it.id }) { index ->
-                        movies[index]?.let { movie -> MovieRow(movie) }
+                        movies[index]?.let { movie -> MovieRow(movie) { onAction(MovieListAction.OnMovieClick(movie.id)) } }
                     }
                     if (state.isAppending) item(key = "append_loading") { LoadingFeedback(R.string.loading_more_movies) }
                     state.appendError?.let { error ->
@@ -119,8 +121,8 @@ fun MovieListScreen(
 }
 
 @Composable
-private fun MovieRow(movie: Movie) {
-    Card(Modifier.fillMaxWidth()) {
+private fun MovieRow(movie: Movie, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(movie.title, style = MaterialTheme.typography.titleMedium)
             Text(

@@ -13,6 +13,6 @@ class MovieMappingTest {
         val dto = MovieDto(7, " Title ", " Overview ", " /poster ", " /backdrop ", "2024-02-29", 0.0, 0, " Original ", " en ")
         val expected = MovieEntity(7, " Title ", " Overview ", " /poster ", " /backdrop ", "2024-02-29", 0.0, 0, " Original ", " en ", 123)
         assertEquals(expected, dto.toEntity(123))
-        assertEquals(Movie(7, " Title ", " Overview "), expected.toDomain())
+        assertEquals(Movie(7, " Title ", " Overview ", "2024-02-29", 0.0, 0, " Original ", " en "), expected.toDomain())
     }
 }

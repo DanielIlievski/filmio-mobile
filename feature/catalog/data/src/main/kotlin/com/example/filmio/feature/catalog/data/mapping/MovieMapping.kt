@@ -24,6 +24,11 @@ internal fun MovieEntity.toDomain(): Movie {
     return Movie(
         id = id,
         title = title,
-        overview = overview
+        overview = overview,
+        releaseDate = releaseDate,
+        voteAverage = voteAverage,
+        voteCount = voteCount,
+        originalTitle = originalTitle,
+        originalLanguage = originalLanguage,
     )
 }

@@ -10,7 +10,7 @@ application context. App supplies its singleton/DAO bindings through Koin. Futur
 released schema changes still require preserving migrations; the observer/factory
 leave the version-1 export unchanged.
 
-`catalog:data` depends on this module and maps validated popular-movie DTOs to local
+`catalog:data` depends on this module and maps validated popular-movie and top-level detail DTOs to local
 records and committed reads to domain models. Database has no feature domain/data/presentation
 or networking dependency. Room runtime is exported for the public superclass;
 Paging common and coroutines core are exported for public `PagingSource` and `Flow`
@@ -87,7 +87,7 @@ favorites while remote pagination starts at page 1. There are no persistent resu
 sets, memberships, query history, page keys, feed/source flags, or per-movie order.
 
 The paginated popular-movie flow uses `OfflineFirstCatalogRepository`,
-`MovieDao.pagingSource()`, and `PopularMoviesRemoteMediator`. Room remains the read
+`MovieDao.pagingSource()`, and `MoviesRemoteMediator`. Room remains the read
 source while the mediator commits additive summaries before advancing in-memory
 continuation. The data-layer anchor adapter preserves absolute local refresh keys
 with disabled placeholders and relays Room invalidation; it does not modify queries
@@ -105,8 +105,30 @@ scrolling. Local read load errors use Paging retry with safe storage feedback.
 
 The ViewModel caches one stream, projects load feedback, and emits Refresh/Retry
 commands to the active root. Active default-network reconnect triggers page-1 refresh
-without removing cache content; callbacks are released when the screen stops. Search,
-details/favorite domain operations, and their presentation remain integration work.
+without removing cache content; callbacks are released when the screen stops. Search and favorite domain operations/presentation remain integration work. Details now
+consume the existing `MovieDetailDao` observation and atomic-write operations through the same repository.
+
+## Implemented detail consumer
+
+`OfflineFirstCatalogRepository.getMovieDetails` maps the DAO's local snapshot Flow to
+safe domain availability. Expected SQLite read failures terminate it with a typed
+`CatalogStorageException`; callers catch this domain carrier, resubscribe, and retain
+their last content. Observation initiates no network request. Every `fetchMovieDetails` invocation requests the latest API data
+without a preliminary cache lookup. Existing details remain observable during the fetch.
+Entry and active reconnect start requests; the detail screen exposes Back as its only action.
+
+The detail mapper validates requested identity, uses one injected-clock timestamp, and
+maps every selected summary/detail column. Null children are skipped; duplicate IDs retain
+last-occurrence order with unique contiguous positions. `upsertMovieDetail` replaces all
+owned metadata before completion is reported. Detail nulls/empty lists clear old values;
+popular writes later update only shared summary fields. Favorites remain independent.
+Data narrowly maps SQLite observation errors and reuses the existing safe write boundary. Cancellation
+and defects propagate; network work stays outside the existing transaction.
+
+No DAO, entity, SQL, index, foreign key, version, or export changed for details. Identity
+hash remains `e4403482a9eea406ad365cc39809fb7d`. See the root README and
+[`docs/verification/movie-details.md`](../../../docs/verification/movie-details.md) for
+JVM evidence, storage review, and separately recorded device checks.
 
 ## Integration handoff
 
@@ -127,8 +149,8 @@ All movie callers use `en-US`; search uses `include_adult=false`. Local matches 
 not wait for remote debounce. The implemented movie list refreshes the active catalog on reconnect while content
 remains visible. Search will follow the same active-query policy when implemented.
 Reconnect does not synchronize historical queries. There is
-no one-hour result-set freshness policy. Details retain tunable 24-hour freshness
-with an injected clock; clock rollback makes them stale without deleting content.
+no one-hour result-set freshness policy. Details always fetch on a new entry and active reconnect while displaying stored content.
+The injected clock records commit timestamps.
 
 The assignment uses local JVM unit tests only. Repository fakes exercise coordination,
 not Room SQL or durable persistence. Review storage changes against these DAO contracts

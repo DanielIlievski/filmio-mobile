@@ -9,9 +9,9 @@ import androidx.paging.testing.asSnapshot
 import com.example.filmio.core.domain.DataError
 import com.example.filmio.core.presentation.util.UiText
 import com.example.filmio.feature.catalog.domain.model.Movie
-import com.example.filmio.feature.catalog.domain.repository.ConnectivityObserver
 import com.example.filmio.feature.catalog.domain.repository.CatalogPagingException
 import com.example.filmio.feature.catalog.domain.repository.CatalogRepository
+import com.example.filmio.feature.catalog.domain.repository.ConnectivityObserver
 import com.example.filmio.feature.catalog.presentation.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -24,12 +24,16 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.test.resetMain
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -42,6 +46,19 @@ class MovieListViewModelTest {
     private fun vm(observer: ConnectivityObserver = connectivity) = MovieListViewModel(repository, observer).also { store.put("list", it) }
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun cleanup() { store.clear(); Dispatchers.resetMain() }
+
+    @Test fun movieSelectionEmitsStableIdentityWithoutChangingPagingOrLoadState() = runTest(dispatcher) {
+        val vm = vm()
+        val seen = mutableListOf<MovieListEvent>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.events.collect { seen += it } }
+        val initial = vm.state.value
+        vm.onAction(MovieListAction.OnMovieClick(42))
+        vm.onAction(MovieListAction.OnMovieClick(0))
+        runCurrent()
+        assertEquals(listOf(MovieListEvent.NavigateToMovieDetail(42)), seen)
+        assertEquals(initial, vm.state.value)
+        assertEquals(1, repository.streams)
+    }
 
     @Test fun defaultsAndLocalOnlyCompletionNeverShowFalseEmpty() = runTest(dispatcher) {
         val vm = vm()
@@ -283,6 +300,8 @@ private fun loads(
 }
 
 private class FakeCatalogRepository : CatalogRepository {
+    override suspend fun fetchMovieDetails(movieId: Long) = error("Unused")
+    override fun getMovieDetails(movieId: Long): Flow<Movie?> = error("Unused")
     var streams = 0
     var collections = 0
     override fun getPagedMovies(): Flow<PagingData<Movie>> {

@@ -39,6 +39,11 @@ class MovieListViewModel(
 
     fun onAction(action: MovieListAction) {
         when (action) {
+            is MovieListAction.OnMovieClick -> {
+                if (action.movieId > 0) viewModelScope.launch {
+                    eventChannel.send(MovieListEvent.NavigateToMovieDetail(action.movieId))
+                }
+            }
             is MovieListAction.OnLoadStatesChanged -> _state.value = projector.project(action.loadStates, action.hasItems)
             MovieListAction.OnRefreshClick -> {
                 if (_state.value.isRefreshing || _state.value.isInitialLoading) return

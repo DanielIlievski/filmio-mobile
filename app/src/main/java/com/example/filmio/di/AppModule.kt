@@ -10,5 +10,6 @@ import org.koin.dsl.module
 val appModule = module {
     single { createCatalogDatabase(androidContext()) }
     single { get<CatalogDatabase>().movieDao() }
+    single { get<CatalogDatabase>().movieDetailDao() }
     single { TmdbConfig(BuildConfig.TMDB_READ_ACCESS_TOKEN) }
 }

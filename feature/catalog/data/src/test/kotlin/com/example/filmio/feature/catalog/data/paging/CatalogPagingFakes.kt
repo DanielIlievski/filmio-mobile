@@ -4,6 +4,7 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import androidx.sqlite.db.SupportSQLiteQuery
 import com.example.filmio.feature.catalog.data.networking.TmdbService
+import com.example.filmio.feature.catalog.data.networking.dto.MovieDetailsDto
 import com.example.filmio.feature.catalog.data.networking.dto.MovieDto
 import com.example.filmio.feature.catalog.data.networking.dto.PopularMoviesResponseDto
 import com.example.filmio.feature.catalog.database.dao.MovieDao
@@ -12,6 +13,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 
 internal class FakeTmdbService : TmdbService {
+    val detailIds = mutableListOf<Long>()
+    var detailResponse: suspend (Long) -> MovieDetailsDto = { MovieDetailsDto(it, "Details") }
+    override suspend fun getMovieDetails(movieId: Long, language: String): MovieDetailsDto {
+        assertEquals("en-US", language)
+        detailIds += movieId
+        return detailResponse(movieId)
+    }
     val pages = mutableListOf<Int>()
     var respond: suspend (Int) -> PopularMoviesResponseDto = { page ->
         PopularMoviesResponseDto(page, listOf(MovieDto(page.toLong(), "Movie %03d".format(page))))
