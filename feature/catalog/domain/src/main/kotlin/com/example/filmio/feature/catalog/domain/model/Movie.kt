@@ -11,4 +11,5 @@ data class Movie(
     val originalLanguage: String? = null,
     val details: MovieDetails? = null,
     val posterUrl: String? = null,
+    val backdropUrl: String? = null,
 )

@@ -29,7 +29,8 @@ class MovieDetailsMappingTest {
             MovieDetails(0, " Tagline ", " Released ", 0, 5_000_000_000, " https://example.com ",
                 " tt7 ", 8, " Collection ", listOf(MovieGenre(1, " Genre ")),
                 listOf(MovieProductionCompany(2, " Company "))),
-            posterUrl = "https://image.tmdb.org/t/p/w500/poster"), snapshot.toDomain())
+            posterUrl = "https://image.tmdb.org/t/p/w500/poster",
+            backdropUrl = "https://image.tmdb.org/t/p/w780/backdrop"), snapshot.toDomain())
         assertNull(snapshot.movie.toDomain().details)
     }
 

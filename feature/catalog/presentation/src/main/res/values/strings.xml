@@ -20,6 +20,17 @@
     <string name="error_movie_not_found">This movie is unavailable from the service. Any stored information remains available.</string>
     <string name="error_movie_id">This movie cannot be opened. Return to the movie list.</string>
     <string name="movie_details">Movie details</string>
+    <string name="movie_content_type">MOVIE</string>
+    <string name="movie_overview">Overview</string>
+    <string name="no_overview">No overview available.</string>
+    <string name="no_backdrop">Artwork unavailable</string>
+    <string name="no_genres">Genres unavailable</string>
+    <string name="runtime">Runtime</string>
+    <string name="movie_runtime_hours_minutes">%1$dh %2$dm</string>
+    <string name="movie_runtime_minutes">%1$dm</string>
+    <string name="movie_vote_count">%1$s votes</string>
+    <string name="movie_details_unavailable">Details aren’t available</string>
+    <string name="movie_details_unavailable_message">There’s no stored copy of this movie. Go back and try opening it again when connected.</string>
     <string name="back">Back</string>
     <string name="loading_movie_details">Loading movie details…</string>
     <string name="refreshing_movie_details">Refreshing movie details…</string>

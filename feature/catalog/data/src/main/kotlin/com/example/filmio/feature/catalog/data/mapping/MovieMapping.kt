@@ -32,5 +32,7 @@ internal fun MovieEntity.toDomain(): Movie {
         originalLanguage = originalLanguage,
         posterUrl = posterPath?.trim()?.takeIf { it.startsWith("/") && it.length > 1 }
             ?.let { "https://image.tmdb.org/t/p/w500$it" },
+        backdropUrl = backdropPath?.trim()?.takeIf { it.startsWith("/") && it.length > 1 }
+            ?.let { "https://image.tmdb.org/t/p/w780$it" },
     )
 }
