@@ -74,4 +74,16 @@
     <string name="could_not_load_movies">Couldn’t load movies</string>
     <string name="could_not_refresh_movies">Couldn’t refresh. Your saved catalog is still available.</string>
     <string name="could_not_load_more_movies">Couldn’t load more movies.</string>
+    <string name="catalog_all">All</string>
+    <string name="saved">Saved</string>
+    <string name="save">Save</string>
+    <string name="saved_movies">Saved movies</string>
+    <string name="search_saved_movies">Search saved movies</string>
+    <string name="save_movie">Save %1$s</string>
+    <string name="remove_saved_movie">Remove %1$s from saved movies</string>
+    <string name="favorite_status_unknown">Saved status unavailable</string>
+    <string name="empty_saved_title">No saved movies yet</string>
+    <string name="empty_saved">Save movies from the list or details to find them here.</string>
+    <string name="no_saved_matches_title">No saved movies match</string>
+    <string name="no_saved_matches">Try another title or clear the search to see your saved movies.</string>
 </resources>

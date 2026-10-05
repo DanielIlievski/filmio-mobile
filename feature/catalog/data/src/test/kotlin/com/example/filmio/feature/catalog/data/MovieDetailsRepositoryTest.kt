@@ -29,7 +29,7 @@ class MovieDetailsRepositoryTest {
     private val service = FakeTmdbService()
     private val now = 100_000_000L
     private fun repository() = OfflineFirstCatalogRepository(
-        service, dao.summaries, dao, Clock.fixed(Instant.ofEpochMilli(now), ZoneOffset.UTC))
+        service, dao.summaries, dao, Clock.fixed(Instant.ofEpochMilli(now), ZoneOffset.UTC), FakeMovieFavoriteDao())
     private fun stored(timestamp: Long = 0) = MovieDetailsDto(7, "Cached", runtime = 116,
         genres = listOf(MovieGenreDto(1, "Drama")), productionCompanies = listOf(MovieProductionCompanyDto(2, "Company")))
         .toSnapshot(7, timestamp)!!
@@ -69,7 +69,7 @@ class MovieDetailsRepositoryTest {
             local.seed(stored())
             val gate = CompletableDeferred<Unit>()
             if (after) local.afterCommit = { gate.await() } else local.beforeCommit = { gate.await() }
-            val repo = OfflineFirstCatalogRepository(service, local.summaries, local, Clock.systemUTC())
+            val repo = OfflineFirstCatalogRepository(service, local.summaries, local, Clock.systemUTC(), FakeMovieFavoriteDao())
             var returned = false
             val job = launch { repo.fetchMovieDetails(7); returned = true }
             runCurrent()
@@ -163,7 +163,8 @@ class MovieDetailsRepositoryTest {
             dao.readFailure.value = failure
             runCurrent()
             assertTrue(observer.isCompleted)
-            assertSame(failure, reported)
+            assertEquals(if (failure is SQLiteFullException) DataError.Local.DISK_FULL else DataError.Local.UNKNOWN,
+                (reported as com.example.filmio.feature.catalog.domain.repository.CatalogStorageException).error)
             assertEquals(listOf(lastContent), seen)
             assertEquals("Cached", lastContent!!.title)
             dao.readFailure.value = null

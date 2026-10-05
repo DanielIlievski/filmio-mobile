@@ -25,7 +25,7 @@ interface per table:
 | --- | --- | --- |
 | `MovieDao` | `observeMovies`, `pagingSource`, `searchPagingSource`, `getMovie`, `upsertMovies` | Whole-catalog Flow and catalog/search paging in title/ID order; nullable one-shot summary read; atomic additive page upserts. |
 | `MovieDetailDao` | `getMovieDetail`, `observeMovieDetail`, `upsertMovieDetail` | Transactionally read/observe one snapshot; atomically replace summary, detail, and ordered owned children. |
-| `MovieFavoriteDao` | `pagingSource`, `observeIsFavorite`, `addFavorite`, `removeFavorite` | Current canonical summaries with favorite timestamps; observable status; local idempotent writes. |
+| `MovieFavoriteDao` | `pagingSource(query)`, `observeFavoriteMovieIds`, `observeIsFavorite`, `setFavorite` | Current canonical summaries with favorite timestamps and optional literal matching; observable IDs/status; transactional desired-state writes. |
 
 `MovieDetailSnapshot` being null means the movie is absent. A nonnull snapshot with
 null `detail` is a summary-only movie; fetched details can have nullable metadata.
@@ -115,10 +115,9 @@ cancellation remain safe to reload.
 The ViewModel caches the current query's stream, projects load feedback, and emits Refresh/Retry
 commands to the active root. Active default-network reconnect triggers page-1 refresh
 without removing cache content; callbacks are released when the screen stops. Presentation
-starts local reads immediately and switches to remote search after a configurable 350 ms
+starts local reads immediately and switches to remote search after a fixed 500 ms
 quiet period. Query-owned scopes and generation tokens prevent abandoned requests or
-commands from affecting current content. Favorite domain operations/presentation remain
-integration work. Details now
+commands from affecting current content. Saved uses a retained local-only Pager with bound title/original-title GLOB matching before paging. Its order stays newest-saved/ID; no mediator, remote IDs, or debounce is involved. Scope switches supersede old search feedback. Favorite operations are local and independently recoverable. Details now
 consume the existing `MovieDetailDao` observation and atomic-write operations through the same repository.
 
 ## Implemented detail consumer
@@ -128,7 +127,7 @@ safe domain availability. Expected SQLite read failures terminate it with a type
 `CatalogStorageException`; callers catch this domain carrier, resubscribe, and retain
 their last content. Observation initiates no network request. Every `fetchMovieDetails` invocation requests the latest API data
 without a preliminary cache lookup. Existing details remain observable during the fetch.
-Entry and active reconnect start requests; the detail screen exposes Back as its only action.
+Entry and active reconnect start requests; the detail screen exposes Back and independent local favorite actions.
 
 The detail mapper validates requested identity, uses one injected-clock timestamp, and
 maps every selected summary/detail column. Null children are skipped; duplicate IDs retain
@@ -183,3 +182,20 @@ migration is permitted for promised offline content.
 Review the exported schema with its implementation. Future delivered-schema changes
 must increment the version and validate preserving migrations. There is no
 `Migration(0, 1)` or destructive fallback for this initial draft.
+
+## Favorite integration
+
+`MovieFavoriteDao.setFavorite` validates canonical existence and applies insert-ignore or
+delete in one transaction. Missing save targets return false for data to map to local
+NOT_FOUND. Data supplies the clock timestamp and translates expected SQLite failures;
+cancellation/defects propagate. `observeFavoriteMovieIds` selects metadata only, and
+per-ID status observation remains local. `pagingSource(query)` returns all favorites for
+blank input or intersects the saved join with a bound escaped GLOB pattern for nonblank
+input. It observes movies and favorites and sorts by saved time DESC, movie ID ASC.
+Data maps joined summaries through the existing mapper; no separate content snapshot is
+stored. Table/index/foreign-key definitions, version 1 and identity hash are unchanged.
+
+The platform rules exclude the database domain, including WAL/SHM sidecars, from backup
+and transfer. Restarts on the same installation retain membership; uninstall/data clear
+have no promised restore. Fake tests establish repository coordination, not Room
+transaction/SQL behavior; see `docs/verification/local-saved-movies.md` for real app checks.

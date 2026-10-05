@@ -77,6 +77,7 @@ class MovieDetailViewModelTest {
         readGate.complete(Unit); runCurrent()
         assertEquals(cached, vm.state.value.movie)
         assertEquals(1, repository.inFlight)
+        assertTrue(vm.state.value.isLoading)
         fetchGate.complete(Unit); runCurrent()
         assertFalse(vm.state.value.isLoading)
         assertEquals(0, repository.inFlight)
@@ -89,9 +90,11 @@ class MovieDetailViewModelTest {
         val vm = vm(); collectState(vm); runCurrent()
         assertEquals(cached.copy(details = null), vm.state.value.movie)
         assertEquals(1, repository.inFlight)
+        assertTrue(vm.state.value.isLoading)
         repository.local.value = Result.Success(cached); runCurrent()
         assertEquals(cached, vm.state.value.movie)
         assertEquals(1, repository.inFlight)
+        assertTrue(vm.state.value.isLoading)
         gate.complete(Unit); runCurrent()
         assertEquals(0, repository.inFlight)
         assertFalse(vm.state.value.isLoading)
@@ -131,24 +134,106 @@ class MovieDetailViewModelTest {
         assertEquals(2, repository.subscriptions)
     }
 
-    @Test fun initialAndRepeatedReconnectNeverOverlapBusyFetch() = runTest(dispatcher) {
+    @Test fun repeatedReconnectReplacesBusyFetchWithoutOverlappingRequests() = runTest(dispatcher) {
         repository.local.value = Result.Success(cached)
         val gate = CompletableDeferred<Unit>()
-        repository.fetch = { _ -> gate.await(); Result.Success(Unit) }
+        var cancellations = 0
+        repository.fetch = { _ ->
+            try {
+                gate.await()
+                Result.Success(Unit)
+            } catch (cancelled: CancellationException) {
+                cancellations++
+                throw cancelled
+            }
+        }
         val vm = vm(); collectState(vm); collectEvents(vm); runCurrent()
+        assertEquals(listOf(7L), repository.requests)
         repeat(10) {
             connectivity.signals.emit(false); runCurrent()
             connectivity.signals.emit(true); runCurrent()
         }
-        assertEquals(listOf(7L), repository.requests)
+        assertEquals(List(11) { 7L }, repository.requests)
+        assertEquals(10, cancellations)
         assertEquals(1, repository.maxInFlight)
+        assertTrue(vm.state.value.isLoading)
+        assertEquals(cached, vm.state.value.movie)
+        assertNull(vm.state.value.error)
         gate.complete(Unit); runCurrent()
         assertFalse(vm.state.value.isLoading)
     }
 
-    @Test fun invalidIdsAreRejectedByRepositoryPreconditionBeforeWorkStarts() = runTest(dispatcher) {
+    @Test fun reconnectCancelsPendingOfflineFetchAndKeepsFreshSuccess() = runTest(dispatcher) {
+        connectivity.signals.emit(false)
+        repository.local.value = Result.Success(cached)
+        var offlineFetchCancelled = false
+        val refreshed = cached.copy(title = "Refreshed")
+        repository.fetch = { _ ->
+            if (repository.requests.size == 1) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    offlineFetchCancelled = true
+                }
+            } else {
+                repository.local.value = Result.Success(refreshed)
+                Result.Success(Unit)
+            }
+        }
+        val vm = vm(); collectState(vm); collectEvents(vm); runCurrent()
+        assertEquals(false, vm.state.value.isConnected)
+        assertEquals(cached, vm.state.value.movie)
+        assertTrue(vm.state.value.isLoading)
+
+        connectivity.signals.emit(true); runCurrent()
+        assertTrue(offlineFetchCancelled)
+        assertEquals(listOf(7L, 7L), repository.requests)
+        assertEquals(1, repository.maxInFlight)
+        assertEquals(refreshed, vm.state.value.movie)
+        assertFalse(vm.state.value.isLoading)
+        assertNull(vm.state.value.error)
+        connectivity.signals.emit(true); runCurrent()
+        assertEquals(listOf(7L, 7L), repository.requests)
+    }
+
+    @Test fun cancelledFetchReturningTimeoutCannotPublishErrorOrClearReplacementLoading() = runTest(dispatcher) {
+        connectivity.signals.emit(false)
+        repository.local.value = Result.Success(cached)
+        val oldFetch = CompletableDeferred<Unit>()
+        val newFetch = CompletableDeferred<Unit>()
+        repository.fetch = { _ ->
+            if (repository.requests.size == 1) {
+                // Simulate a boundary that finishes returning a result after cancellation.
+                withContext(NonCancellable) { oldFetch.await() }
+                Result.Error(DataError.Network.REQUEST_TIMEOUT)
+            } else {
+                newFetch.await()
+                Result.Success(Unit)
+            }
+        }
+        val vm = vm(); collectState(vm); collectEvents(vm); runCurrent()
+        connectivity.signals.emit(true); runCurrent()
+        assertTrue(vm.state.value.isLoading)
+        assertNull(vm.state.value.error)
+        assertEquals(listOf(7L), repository.requests)
+
+        oldFetch.complete(Unit); runCurrent()
+        assertEquals(listOf(7L, 7L), repository.requests)
+        assertEquals(1, repository.maxInFlight)
+        assertEquals(cached, vm.state.value.movie)
+        assertTrue(vm.state.value.isLoading)
+        assertNull(vm.state.value.error)
+        newFetch.complete(Unit); runCurrent()
+        assertFalse(vm.state.value.isLoading)
+        assertNull(vm.state.value.error)
+    }
+
+    @Test fun invalidIdsNeverInvokeRepositoryObserversOrCommands() = runTest(dispatcher) {
         for (id in listOf(0L, -1L)) {
-            assertThrows(IllegalArgumentException::class.java) { vm(id) }
+            val invalid = vm(id)
+            collectState(invalid); runCurrent()
+            invalid.onAction(MovieDetailAction.OnSetFavorite(true)); runCurrent()
+            assertEquals(R.string.error_movie_id, invalid.state.value.error.resourceId())
         }
         assertEquals(0, repository.subscriptions)
         assertTrue(repository.requests.isEmpty())
@@ -204,6 +289,56 @@ class MovieDetailViewModelTest {
         assertEquals(listOf(7L), repository.requests)
     }
 
+    @Test fun localReadFailureRetainsContentAndReconnectOnlyFetchesRemoteDetails() = runTest(dispatcher) {
+        repository.local.value = Result.Success(cached)
+        val vm = vm(); collectState(vm); collectEvents(vm); runCurrent()
+        repository.local.value = Result.Error(DataError.Local.DISK_FULL); runCurrent()
+        assertEquals(cached, vm.state.value.movie)
+        assertEquals(R.string.error_disk_full, vm.state.value.error.resourceId())
+        assertEquals(0, repository.activeObservers)
+        repository.local.value = Result.Success(cached.copy(title = "Recovered"))
+        connectivity.signals.emit(false); runCurrent(); connectivity.signals.emit(true); runCurrent()
+        assertEquals(cached, vm.state.value.movie)
+        assertEquals(1, repository.subscriptions)
+        assertEquals(0, repository.activeObservers)
+        assertEquals(listOf(7L, 7L), repository.requests)
+        assertEquals(R.string.error_disk_full, vm.state.value.error.resourceId())
+    }
+
+    @Test fun localReadFailureSurvivesNetworkCompletionUntilReadRecovery() = runTest(dispatcher) {
+        repository.local.value = Result.Success(cached)
+        val fetchGate = CompletableDeferred<Unit>()
+        repository.fetch = { _ -> fetchGate.await(); Result.Success(Unit) }
+        val vm = vm(); collectState(vm); collectEvents(vm); runCurrent()
+        repository.local.value = Result.Error(DataError.Local.DISK_FULL); runCurrent()
+        assertTrue(vm.state.value.isLoading)
+        fetchGate.complete(Unit); runCurrent()
+        assertEquals(cached, vm.state.value.movie)
+        assertEquals(R.string.error_disk_full, vm.state.value.error.resourceId())
+
+        repository.fetch = { _ -> Result.Error(DataError.Network.REQUEST_TIMEOUT) }
+        connectivity.signals.emit(false); runCurrent()
+        connectivity.signals.emit(true); runCurrent()
+        assertEquals(cached, vm.state.value.movie)
+        assertEquals(R.string.error_disk_full, vm.state.value.error.resourceId())
+        assertFalse(vm.state.value.isLoading)
+    }
+
+    @Test fun failedLocalReadRecoversOnRecollectionWithoutAnotherEntryFetch() = runTest(dispatcher) {
+        repository.local.value = Result.Success(cached)
+        val vm = vm(); val first = collectState(vm); runCurrent()
+        repository.local.value = Result.Error(DataError.Local.UNKNOWN); runCurrent()
+        assertEquals(0, repository.activeObservers)
+        first.cancel(); advanceTimeBy(5_001); runCurrent()
+        repository.local.value = Result.Success(cached.copy(title = "Recovered"))
+        collectState(vm); runCurrent()
+        assertEquals("Recovered", vm.state.value.movie!!.title)
+        assertNull(vm.state.value.error)
+        assertEquals(2, repository.subscriptions)
+        assertEquals(1, repository.activeObservers)
+        assertEquals(listOf(7L), repository.requests)
+    }
+
     @Test fun typedErrorLocalizationAndBackEffectsStaySafeAndOneOff() = runTest(dispatcher) {
         repository.local.value = Result.Success(cached)
         val vm = vm(); collectState(vm)
@@ -229,6 +364,11 @@ class MovieDetailViewModelTest {
 }
 
 private class DetailRepositoryFake : CatalogRepository {
+    override fun observeFavoriteMovieIds() = kotlinx.coroutines.flow.flowOf(emptySet<Long>())
+    override fun observeIsMovieFavorite(movieId: Long) = kotlinx.coroutines.flow.flowOf(false)
+    override fun getPagedSavedMovies(query: String) = kotlinx.coroutines.flow.flowOf(PagingData.empty<Movie>())
+    override suspend fun setMovieFavorite(movieId: Long, isFavorite: Boolean): com.example.filmio.core.domain.EmptyResult<DataError.Local> = com.example.filmio.core.domain.Result.Success(Unit)
+
     override fun searchMovies(query: String, fetchRemote: Boolean): Flow<PagingData<Movie>> = error("Unused")
     val local = MutableStateFlow<Result<Movie?, DataError.Local>>(Result.Success(null))
     val requests = mutableListOf<Long>()

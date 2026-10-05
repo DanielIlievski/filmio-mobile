@@ -41,6 +41,20 @@ internal class MovieListLoadStateProjector {
             ?: appendFailure.takeUnless { hasItems }
         val settled = loads.source.refresh is LoadState.NotLoading && remote?.refresh is LoadState.NotLoading
 
+        if (current.catalogView == CatalogView.SAVED) {
+            val localSettled = loads.source.refresh is LoadState.NotLoading &&
+                (loads.source.append.endOfPaginationReached || loads.source.prepend.endOfPaginationReached)
+            return current.copy(
+                hasNoCachedMatches = false,
+                isInitialLoading = !hasItems && refreshFailure == null && !localSettled,
+                isRefreshing = loads.source.refresh is LoadState.Loading,
+                isAppending = hasItems && loads.source.append is LoadState.Loading,
+                isEmpty = !hasItems && localSettled && refreshFailure == null && !appendLoading,
+                refreshError = refreshFailure?.error?.toPagingUiText(),
+                appendError = appendFailure?.error?.toPagingUiText().takeIf { hasItems },
+            )
+        }
+
         val search = current.isSearchActive
         val localSettled = loads.source.refresh is LoadState.NotLoading
         val searchExhausted = remoteRefreshSucceeded && remote?.append?.endOfPaginationReached == true

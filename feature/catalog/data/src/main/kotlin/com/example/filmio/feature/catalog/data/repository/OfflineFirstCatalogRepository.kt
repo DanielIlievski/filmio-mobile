@@ -1,5 +1,7 @@
 package com.example.filmio.feature.catalog.data.repository
 
+import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteFullException
 import androidx.paging.ExperimentalPagingApi
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
@@ -19,13 +21,16 @@ import com.example.filmio.feature.catalog.data.networking.TmdbService
 import com.example.filmio.feature.catalog.data.paging.AnchoredMoviePagingSource
 import com.example.filmio.feature.catalog.data.paging.MovieSearchRemoteMediator
 import com.example.filmio.feature.catalog.data.paging.MoviesRemoteMediator
+import com.example.filmio.feature.catalog.database.dao.MovieFavoriteDao
 import com.example.filmio.feature.catalog.database.dao.MovieDao
 import com.example.filmio.feature.catalog.database.dao.MovieDetailDao
 import com.example.filmio.feature.catalog.database.entities.MovieEntity
 import com.example.filmio.feature.catalog.domain.model.Movie
 import com.example.filmio.feature.catalog.domain.repository.CatalogRepository
+import com.example.filmio.feature.catalog.domain.repository.CatalogStorageException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -36,7 +41,27 @@ class OfflineFirstCatalogRepository(
     private val movieDao: MovieDao,
     private val movieDetailDao: MovieDetailDao,
     private val clock: Clock,
+    private val movieFavoriteDao: MovieFavoriteDao,
 ) : CatalogRepository {
+
+    override fun observeFavoriteMovieIds(): Flow<Set<Long>> = movieFavoriteDao.observeFavoriteMovieIds().map { it.toSet() }.distinctUntilChanged().translateStorageFailures()
+    override fun observeIsMovieFavorite(movieId: Long): Flow<Boolean> {
+        require(movieId > 0) { "Movie ID must be positive" }
+        return movieFavoriteDao.observeIsFavorite(movieId).distinctUntilChanged().translateStorageFailures()
+    }
+    override fun getPagedSavedMovies(query: String): Flow<PagingData<Movie>> = Pager(
+        config = PagingConfig(pageSize = 20, initialLoadSize = 20, enablePlaceholders = false, prefetchDistance = 1),
+        pagingSourceFactory = { AnchoredMoviePagingSource(movieFavoriteDao.pagingSource(query)) },
+    ).flow.map { pages -> pages.map { it.movie.toDomain() } }
+    override suspend fun setMovieFavorite(movieId: Long, isFavorite: Boolean): EmptyResult<DataError.Local> {
+        require(movieId > 0) { "Movie ID must be positive" }
+        return when (val result = safeDatabaseUpdate {
+            movieFavoriteDao.setFavorite(movieId, isFavorite, clock.millis())
+        }) {
+            is Result.Success -> if (result.data) Result.Success(Unit) else Result.Error(DataError.Local.NOT_FOUND)
+            is Result.Error -> result
+        }
+    }
 
     @OptIn(ExperimentalPagingApi::class)
     override fun getPagedMovies(): Flow<PagingData<Movie>> {
@@ -99,5 +124,16 @@ class OfflineFirstCatalogRepository(
                 movieDetailSnapshot.toDomain()
             }
             .distinctUntilChanged()
+            .translateStorageFailures()
+    }
+}
+
+/** Only expected SQLite failures cross the domain boundary; cancellation/defects propagate. */
+private fun <T> Flow<T>.translateStorageFailures(): Flow<T> = catch { failure ->
+    currentCoroutineContext().ensureActive()
+    when (failure) {
+        is SQLiteFullException -> throw CatalogStorageException(DataError.Local.DISK_FULL)
+        is SQLiteException -> throw CatalogStorageException(DataError.Local.UNKNOWN)
+        else -> throw failure
     }
 }

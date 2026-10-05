@@ -37,7 +37,7 @@ class MovieSearchRepositoryTest {
     private val dao = FakeMovieDao()
     private val service = FakeTmdbService()
     private val details = FakeMovieDetailDao(dao)
-    private val repository = OfflineFirstCatalogRepository(service, dao, details, Clock.systemUTC())
+    private val repository = OfflineFirstCatalogRepository(service, dao, details, Clock.systemUTC(), FakeMovieFavoriteDao())
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun cleanup() { Dispatchers.resetMain() }
 

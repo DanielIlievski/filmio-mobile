@@ -34,7 +34,7 @@ class CatalogRepositoryTest {
     private val dispatcher = StandardTestDispatcher()
     private val dao = FakeMovieDao()
     private val service = FakeTmdbService()
-    private fun repository() = OfflineFirstCatalogRepository(service, dao, FakeMovieDetailDao(dao), Clock.systemUTC())
+    private fun repository() = OfflineFirstCatalogRepository(service, dao, FakeMovieDetailDao(dao), Clock.systemUTC(), FakeMovieFavoriteDao())
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun cleanup() { Dispatchers.resetMain() }
 

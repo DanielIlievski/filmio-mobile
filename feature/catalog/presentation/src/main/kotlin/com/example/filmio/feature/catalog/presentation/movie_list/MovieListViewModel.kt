@@ -12,7 +12,9 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.example.filmio.feature.catalog.domain.model.Movie
 import com.example.filmio.feature.catalog.domain.repository.CatalogRepository
+import com.example.filmio.feature.catalog.domain.repository.CatalogStorageException
 import com.example.filmio.feature.catalog.domain.repository.ConnectivityObserver
+import com.example.filmio.feature.catalog.presentation.util.toUiText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -25,8 +27,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -42,10 +47,8 @@ import kotlin.time.Duration.Companion.milliseconds
 class MovieListViewModel(
     private val catalogRepository: CatalogRepository,
     private val connectivityObserver: ConnectivityObserver,
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
-    private val initialQuery: String = savedStateHandle.get<String>(QUERY_KEY) ?: ""
-
     private var hasLoadedInitialData = false
 
     private val eventChannel = Channel<MovieListEvent>()
@@ -57,45 +60,63 @@ class MovieListViewModel(
         }
 
     private val _state = MutableStateFlow(
-        MovieListState(
-            queryTextState = TextFieldState(initialQuery),
-            isSearchActive = initialQuery.isNotBlank(),
-            isDebouncing = initialQuery.isNotBlank(),
-        )
+        run {
+            val query = savedStateHandle.get<String>(QUERY_KEY) ?: ""
+            val view = savedStateHandle.get<String>(VIEW_KEY)
+                ?.let { name -> CatalogView.entries.find { it.name == name } }
+                ?: CatalogView.ALL
+            MovieListState(
+                catalogView = view,
+                queryTextState = TextFieldState(query),
+                isSearchActive = query.isNotBlank(),
+                isDebouncing = query.isNotBlank() && view == CatalogView.ALL,
+            )
+        }
     )
     val state: StateFlow<MovieListState> = _state
         .onStart {
             if (!hasLoadedInitialData) {
+                observeFavorites()
                 searchFlow.launchIn(viewModelScope)
                 hasLoadedInitialData = true
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), _state.value)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000L),
+            initialValue = _state.value
+        )
 
     private var projector = MovieListLoadStateProjector()
     private var lastLoadFeedback: MovieListAction.OnLoadStatesChanged? = null
 
     // Feedback and commands must identify their producing Pager, including A -> B -> A.
     private var generation = 0L
-    private var activeQuery = initialQuery.trim()
+    private var activeQuery = _state.value.queryTextState.text.toString().trim()
+    private val homeMovies by lazy { catalogRepository.getPagedMovies().cachedIn(viewModelScope) }
+    private val savedMovies by lazy { catalogRepository.getPagedSavedMovies().cachedIn(viewModelScope) }
 
     // cachedIn keeps collecting with no UI receiver; cancel that work on query changes.
     private var queryScope = newQueryScope()
     private var fetchRemote = MutableStateFlow(false)
-    private val _movies = MutableStateFlow(createMovies(activeQuery))
+    private val _movies = MutableStateFlow(createMovies(activeQuery, _state.value.catalogView))
 
     // Outer state selects a query's cached stream so the UI can reset its presenter.
     // Inner emissions switch local -> remote paging without resetting that presenter.
     val movies: StateFlow<Flow<PagingData<Movie>>> = _movies.asStateFlow()
 
-    private val searchFlow = snapshotFlow { _state.value.queryTextState.text.toString() }
-        .onEach { savedStateHandle[QUERY_KEY] = it }
-        .map { it.trim() }
-        .distinctUntilChanged()
-        .onEach { changeQuery(it) } // Local reads never wait for the online debounce.
+    private val searchFlow = combine(
+        snapshotFlow { _state.value.queryTextState.text.toString() }
+            .onEach { savedStateHandle[QUERY_KEY] = it }
+            .map { it.trim() }.distinctUntilChanged(),
+        _state.map { it.catalogView }.distinctUntilChanged(),
+    ) { query, view -> query to view }
+        // Ignore a queued combination from before a synchronous selection change.
+        .filter { (_, view) -> view == _state.value.catalogView }
+        .onEach { (query, view) -> changeRequest(query, view) }
         .debounce(500.milliseconds)
-        .onEach { query ->
-            if (query.isNotEmpty() && query == activeQuery) {
+        .onEach { (query, view) ->
+            if (query.isNotEmpty() && query == activeQuery && view == _state.value.catalogView && view == CatalogView.ALL) {
                 generation++
                 projector = MovieListLoadStateProjector()
                 lastLoadFeedback = null
@@ -116,21 +137,23 @@ class MovieListViewModel(
         viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job])
     )
 
-    private fun createMovies(query: String): Flow<PagingData<Movie>> {
+    private fun createMovies(query: String, view: CatalogView): Flow<PagingData<Movie>> {
         val remoteMode = fetchRemote
-        val pages = if (query.isEmpty()) {
-            catalogRepository.getPagedMovies()
-        } else {
-            remoteMode.flatMapLatest {
-                catalogRepository.searchMovies(query, it)
-            }
-        }
-        // One flow/presenter per query preserves rows and scroll when remote search starts.
+        if (query.isEmpty()) return if (view == CatalogView.SAVED) savedMovies else homeMovies
+        val pages = if (view == CatalogView.SAVED) {
+            catalogRepository.getPagedSavedMovies(query)
+        } else remoteMode.flatMapLatest { catalogRepository.searchMovies(query, it) }
         return pages.cachedIn(queryScope)
     }
 
     fun onAction(action: MovieListAction) {
         when (action) {
+            is MovieListAction.OnCatalogViewChange -> {
+                savedStateHandle[VIEW_KEY] = action.view.name
+                changeRequest(_state.value.queryTextState.text.toString().trim(), action.view)
+            }
+
+            is MovieListAction.OnSetFavorite -> setFavorite(action.movieId, action.desired)
             MovieListAction.OnClearQuery -> _state.value.queryTextState.clearText()
             is MovieListAction.OnMovieClick -> movieClick(action)
             is MovieListAction.OnLoadStatesChanged -> loadStateChanged(action)
@@ -149,7 +172,7 @@ class MovieListViewModel(
 
     private fun loadStateChanged(action: MovieListAction.OnLoadStatesChanged) {
         if (action.generation == generation &&
-            (!_state.value.isSearchActive || (action.loadStates.mediator == null) == _state.value.isDebouncing)
+            (_state.value.catalogView == CatalogView.SAVED || !_state.value.isSearchActive || (action.loadStates.mediator == null) == _state.value.isDebouncing)
         ) {
             lastLoadFeedback = action
             // update may reevaluate its lambda; record the outcome once before projecting.
@@ -162,7 +185,7 @@ class MovieListViewModel(
 
     private fun refresh(action: MovieListAction.OnRefreshClick) {
         val current = _state.value
-        if (action.generation != generation || current.isDebouncing || current.isRefreshing || current.isInitialLoading) return
+        if (current.catalogView == CatalogView.SAVED || action.generation != generation || current.isDebouncing || current.isRefreshing || current.isInitialLoading) return
         markRefreshing()
         sendCommand(MovieListEvent.RefreshMovies(generation))
     }
@@ -182,8 +205,8 @@ class MovieListViewModel(
         sendCommand(MovieListEvent.RetryMovies(generation))
     }
 
-    private fun changeQuery(query: String) {
-        if (query == activeQuery) return
+    private fun changeRequest(query: String, view: CatalogView) {
+        if (query == activeQuery && view == _state.value.catalogView) return
         queryScope.cancel()
         queryScope = newQueryScope()
         fetchRemote = MutableStateFlow(false)
@@ -192,13 +215,14 @@ class MovieListViewModel(
         projector = MovieListLoadStateProjector()
         lastLoadFeedback = null
         _state.update { current ->
-            MovieListState(
-                queryTextState = current.queryTextState,
-                isSearchActive = query.isNotEmpty(), generation = generation,
-                isDebouncing = query.isNotEmpty(), isOffline = current.isOffline,
+            current.copy(
+                catalogView = view, isSearchActive = query.isNotEmpty(), generation = generation,
+                isDebouncing = query.isNotEmpty() && view == CatalogView.ALL,
+                isInitialLoading = true, isRefreshing = false, isAppending = false,
+                isEmpty = false, hasNoCachedMatches = false, refreshError = null, appendError = null,
             )
         }
-        _movies.update { createMovies(query) }
+        _movies.value = createMovies(query, view)
     }
 
     private fun sendCommand(event: MovieListEvent) {
@@ -209,6 +233,26 @@ class MovieListViewModel(
     private fun markRefreshing() {
         _state.update { current ->
             current.copy(isRefreshing = true, isEmpty = false, refreshError = null, appendError = null)
+        }
+    }
+
+    private fun observeFavorites() {
+        viewModelScope.launch {
+            catalogRepository.observeFavoriteMovieIds()
+                .catch { failure ->
+                    if (failure !is CatalogStorageException) throw failure
+                    _state.update { it.copy(refreshError = failure.error.toUiText()) }
+                }
+                .collect { ids ->
+                    _state.update { it.copy(favoriteIds = ids) }
+                }
+        }
+    }
+
+    private fun setFavorite(id: Long, isFavorite: Boolean) {
+        if (id <= 0 || _state.value.favoriteIds == null) return
+        viewModelScope.launch {
+            catalogRepository.setMovieFavorite(movieId = id, isFavorite = isFavorite)
         }
     }
 
@@ -227,7 +271,7 @@ class MovieListViewModel(
                         isEmpty = offlineState.isEmpty && !noCachedMatches,
                     )
                 }
-                if (previous == false && connected && !_state.value.isDebouncing && !_state.value.isRefreshing) {
+                if (previous == false && connected && _state.value.catalogView == CatalogView.ALL && !_state.value.isDebouncing && !_state.value.isRefreshing) {
                     val target = generation
                     eventChannel.send(MovieListEvent.RefreshMovies(target))
                     if (target == generation) markRefreshing()
@@ -238,6 +282,7 @@ class MovieListViewModel(
     }
 
     companion object {
+        const val VIEW_KEY = "catalogView"
         const val QUERY_KEY = "movieSearchQuery"
     }
 }

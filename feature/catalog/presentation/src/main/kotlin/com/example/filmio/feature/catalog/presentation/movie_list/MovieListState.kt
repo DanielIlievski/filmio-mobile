@@ -1,9 +1,13 @@
 package com.example.filmio.feature.catalog.presentation.movie_list
 
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.runtime.Stable
 import com.example.filmio.core.presentation.util.UiText
 
+@Stable
 data class MovieListState(
+    val catalogView: CatalogView = CatalogView.ALL,
+    val favoriteIds: Set<Long>? = null,
     val queryTextState: TextFieldState = TextFieldState(),
     // Selects search UI/scroll even after remote loading completes or fails.
     val isSearchActive: Boolean = false,

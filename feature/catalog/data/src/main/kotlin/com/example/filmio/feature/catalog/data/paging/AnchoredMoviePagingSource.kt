@@ -2,12 +2,11 @@ package com.example.filmio.feature.catalog.data.paging
 
 import androidx.paging.PagingSource
 import androidx.paging.PagingState
-import com.example.filmio.feature.catalog.database.entities.MovieEntity
 
 /** Keeps Room's absolute offset keys stable when the presenter omits leading placeholders. */
-internal class AnchoredMoviePagingSource(
-    private val source: PagingSource<Int, MovieEntity>,
-) : PagingSource<Int, MovieEntity>() {
+internal class AnchoredMoviePagingSource<T : Any>(
+    private val source: PagingSource<Int, T>,
+) : PagingSource<Int, T>() {
     init {
         val onInvalidated: () -> Unit = { invalidate() }
         source.registerInvalidatedCallback(onInvalidated)
@@ -19,9 +18,9 @@ internal class AnchoredMoviePagingSource(
 
     override val jumpingSupported: Boolean get() = source.jumpingSupported
     override val keyReuseSupported: Boolean get() = source.keyReuseSupported
-    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, MovieEntity> = source.load(params)
+    override suspend fun load(params: LoadParams<Int>): LoadResult<Int, T> = source.load(params)
 
-    override fun getRefreshKey(state: PagingState<Int, MovieEntity>): Int? {
+    override fun getRefreshKey(state: PagingState<Int, T>): Int? {
         val anchor = state.anchorPosition ?: return source.getRefreshKey(state)
         if (state.config.enablePlaceholders) return source.getRefreshKey(state)
         val offset = state.pages.firstOrNull()?.itemsBefore

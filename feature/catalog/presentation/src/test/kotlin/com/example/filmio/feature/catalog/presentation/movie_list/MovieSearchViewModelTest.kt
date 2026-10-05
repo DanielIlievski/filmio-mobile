@@ -82,14 +82,14 @@ class MovieSearchViewModelTest {
             changeQuery(vm, query); runCurrent(); advanceTimeBy(100)
         }
         assertEquals(listOf("I" to false, "In" to false, "Inter" to false), repository.searches)
-        assertEquals(listOf("Home", "I:false", "In:false"), repository.canceled)
+        assertEquals(listOf("I:false", "In:false"), repository.canceled)
         vm.onAction(MovieListAction.OnClearQuery); Snapshot.sendApplyNotifications(); runCurrent(); advanceTimeBy(1000); runCurrent()
         assertTrue(repository.searches.none { it.second })
-        assertEquals(2, repository.homes)
+        assertEquals(1, repository.homes)
         assertFalse(vm.state.value.isSearchActive)
         assertFalse(vm.state.value.isDebouncing)
         changeQuery(vm, "  "); runCurrent()
-        assertEquals(2, repository.homes)
+        assertEquals(1, repository.homes)
         changeQuery(vm, "Arrival"); runCurrent()
         advanceTimeBy(499); runCurrent()
         assertEquals("Arrival" to false, repository.searches.last())
@@ -208,6 +208,11 @@ private fun feedback(
 }
 
 private class SearchRepositoryFake : CatalogRepository {
+    override fun observeFavoriteMovieIds() = kotlinx.coroutines.flow.flowOf(emptySet<Long>())
+    override fun observeIsMovieFavorite(movieId: Long) = kotlinx.coroutines.flow.flowOf(false)
+    override fun getPagedSavedMovies(query: String) = kotlinx.coroutines.flow.flowOf(PagingData.empty<Movie>())
+    override suspend fun setMovieFavorite(movieId: Long, isFavorite: Boolean): com.example.filmio.core.domain.EmptyResult<DataError.Local> = com.example.filmio.core.domain.Result.Success(Unit)
+
     val searches = mutableListOf<Pair<String, Boolean>>()
     val canceled = mutableListOf<String>()
     var homes = 0

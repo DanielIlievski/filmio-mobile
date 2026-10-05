@@ -1,6 +1,7 @@
 package com.example.filmio.feature.catalog.presentation.movie_detail
 
 import androidx.annotation.StringRes
+import com.example.filmio.feature.catalog.presentation.components.FavoriteControl
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -94,16 +95,24 @@ fun MovieDetailScreen(
     val largeText = LocalDensity.current.fontScale > 1.3f
     Scaffold(modifier = modifier) { insets ->
         BoxWithConstraints(
-            Modifier.fillMaxSize().padding(insets),
+            Modifier
+                .fillMaxSize()
+                .padding(insets),
             contentAlignment = Alignment.TopCenter,
         ) {
             val expanded = maxWidth >= 840.dp && !largeText
             val stackMetadata = largeText || maxWidth < 360.dp
             val onBack = { onAction(MovieDetailAction.OnBackClick) }
-            Column(Modifier.widthIn(max = 1120.dp).fillMaxSize()) {
+            Column(
+                Modifier
+                    .widthIn(max = 1120.dp)
+                    .fillMaxSize()
+            ) {
                 if (expanded) {
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 16.dp),
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
@@ -115,13 +124,23 @@ fun MovieDetailScreen(
                         Text(stringResource(R.string.filmio_wordmark), style = MaterialTheme.typography.titleLarge)
                     }
                 }
-                Box(Modifier.fillMaxWidth().weight(1f)) {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         val movie = state.movie
                         when {
                             movie == null -> {
                                 Column(
-                                    Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 24.dp)
                                         .padding(top = if (expanded) 24.dp else 88.dp, bottom = 24.dp),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
@@ -136,8 +155,11 @@ fun MovieDetailScreen(
                                     }
                                 }
                             }
+
                             expanded -> Row(
-                                Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = 32.dp),
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 32.dp, end = 32.dp, top = 16.dp, bottom = 32.dp),
                                 horizontalArrangement = Arrangement.spacedBy(40.dp),
                             ) {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -146,18 +168,21 @@ fun MovieDetailScreen(
                                 }
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                                     DetailFeedback(state)
-                                    MovieInformation(movie, expanded = true, stackMetadata = false)
+                                    MovieInformation(movie, expanded = true, stackMetadata = false, state, onAction)
                                 }
                             }
+
                             else -> {
                                 MovieBackdrop(movie.backdropUrl)
                                 Column(
-                                    Modifier.fillMaxWidth().padding(24.dp),
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(24.dp),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
                                     DetailFeedback(state)
                                     MovieTitle(movie.title, expanded = false, largeText = largeText)
-                                    MovieInformation(movie, expanded = false, stackMetadata = stackMetadata)
+                                    MovieInformation(movie, expanded = false, stackMetadata = stackMetadata, state, onAction)
                                 }
                             }
                         }
@@ -185,8 +210,11 @@ fun MovieDetailScreen(
 private fun MovieBackdrop(url: String?, modifier: Modifier = Modifier) {
     val painter = rememberAsyncImagePainter(model = url, contentScale = ContentScale.Crop)
     Box(
-        modifier.fillMaxWidth().aspectRatio(16f / 9f)
-            .background(MaterialTheme.colorScheme.surfaceContainer).clearAndSetSemantics {},
+        modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clearAndSetSemantics {},
         contentAlignment = Alignment.Center,
     ) {
         if (painter.state !is AsyncImagePainter.State.Success) {
@@ -222,31 +250,44 @@ private fun MovieTitle(title: String, expanded: Boolean, largeText: Boolean) {
 }
 
 @Composable
-private fun MovieInformation(movie: Movie, expanded: Boolean, stackMetadata: Boolean) {
+private fun MovieInformation(
+    movie: Movie,
+    expanded: Boolean,
+    stackMetadata: Boolean,
+    state: MovieDetailState,
+    onAction: (MovieDetailAction) -> Unit
+) {
     val details = movie.details
     val runtime = runtimeText(details?.runtimeMinutes)
     val locale = LocalConfiguration.current.locales[0]
     Column(verticalArrangement = Arrangement.spacedBy(if (expanded) 24.dp else 16.dp)) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            contentColor = MaterialTheme.colorScheme.primary,
-            shape = RoundedCornerShape(12.dp),
-        ) {
-            Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                contentColor = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(12.dp),
             ) {
-                val score = movie.voteAverage?.takeIf { it.isFinite() && it in 0.0..10.0 && !(it == 0.0 && movie.voteCount == 0) }
-                if (score != null) {
-                    Icon(painterResource(R.drawable.ic_star), contentDescription = null, modifier = Modifier.size(16.dp))
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val score = movie.voteAverage?.takeIf { it.isFinite() && it in 0.0..10.0 && !(it == 0.0 && movie.voteCount == 0) }
+                    if (score != null) {
+                        Icon(painterResource(R.drawable.ic_star), contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                    val rating = score?.let { stringResource(R.string.movie_score, it) } ?: stringResource(R.string.not_rated)
+                    Text(
+                        text = rating,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
-                val rating = score?.let { stringResource(R.string.movie_score, it) } ?: stringResource(R.string.not_rated)
-                Text(
-                    if (!expanded && !stackMetadata && runtime != null) "$rating · $runtime" else rating,
-                    style = MaterialTheme.typography.labelLarge,
-                )
             }
+            FavoriteControl(
+                title = movie.title,
+                favorite = state.isFavorite,
+                enabled = movie.id > 0,
+                onSetFavorite = { onAction(MovieDetailAction.OnSetFavorite(it)) })
         }
         movie.voteCount?.takeIf { it >= 0 }?.let { votes ->
             Text(
@@ -256,13 +297,17 @@ private fun MovieInformation(movie: Movie, expanded: Boolean, stackMetadata: Boo
         }
         if (details != null) {
             if (details.genres.isEmpty()) {
-                Text(stringResource(R.string.no_genres), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    stringResource(R.string.no_genres), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             } else {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     details.genres.forEach { genre ->
-                        Text(genre.name, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            genre.name, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -270,8 +315,10 @@ private fun MovieInformation(movie: Movie, expanded: Boolean, stackMetadata: Boo
         SectionHeading(R.string.movie_overview, expanded)
         Text(
             movie.overview?.takeIf { it.isNotBlank() } ?: stringResource(R.string.no_overview),
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = if (expanded) 18.sp else 16.sp,
-                lineHeight = if (expanded) 27.sp else 23.sp),
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = if (expanded) 18.sp else 16.sp,
+                lineHeight = if (expanded) 27.sp else 23.sp
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -292,8 +339,10 @@ private fun MovieInformation(movie: Movie, expanded: Boolean, stackMetadata: Boo
             }
         }
         if (details == null) {
-            Text(stringResource(R.string.movie_summary_only), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                stringResource(R.string.movie_summary_only), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -302,18 +351,28 @@ private fun MovieInformation(movie: Movie, expanded: Boolean, stackMetadata: Boo
 private fun DetailFeedback(state: MovieDetailState) {
     if (!state.isLoading && state.isConnected != false && state.error == null) return
     Column(
-        Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+        Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (state.isConnected == false) {
-            Text(stringResource(if (state.movie == null) R.string.offline_movie_unavailable else R.string.offline_movie_cached),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                stringResource(if (state.movie == null) R.string.offline_movie_unavailable else R.string.offline_movie_cached),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         if (state.isLoading) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(16.dp).clearAndSetSemantics {}, strokeWidth = 2.dp)
-                Text(stringResource(if (state.movie == null) R.string.loading_movie_details else R.string.refreshing_movie_details),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                CircularProgressIndicator(
+                    Modifier
+                        .size(16.dp)
+                        .clearAndSetSemantics {}, strokeWidth = 2.dp
+                )
+                Text(
+                    stringResource(if (state.movie == null) R.string.loading_movie_details else R.string.refreshing_movie_details),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         state.error?.let { Text(it.asString(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
@@ -322,7 +381,8 @@ private fun DetailFeedback(state: MovieDetailState) {
 
 @Composable
 private fun SectionHeading(@StringRes label: Int, expanded: Boolean = false) {
-    Text(stringResource(label), style = if (expanded) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
+    Text(
+        stringResource(label), style = if (expanded) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
         modifier = Modifier.semantics { heading() })
 }
 
@@ -347,22 +407,24 @@ private val previewMovie = Movie(
     title = "Interstellar",
     overview = "A team of explorers travels beyond this galaxy to discover whether mankind has a future among the stars. Cooper, a former pilot, must leave his family behind to lead a mission through a wormhole in search of a new home for humanity.",
     releaseDate = "2014-11-05", voteAverage = 8.7, voteCount = 18_000,
-    details = MovieDetails(runtimeMinutes = 169, tagline = "Mankind was born on Earth. It was never meant to die here.",
+    details = MovieDetails(
+        runtimeMinutes = 169, tagline = "Mankind was born on Earth. It was never meant to die here.",
         status = "Released", budget = 165_000_000, revenue = 701_729_206,
         genres = listOf(MovieGenre(12, "Adventure"), MovieGenre(18, "Drama"), MovieGenre(878, "Sci-Fi")),
-        productionCompanies = listOf(MovieProductionCompany(923, "Legendary Pictures"))),
+        productionCompanies = listOf(MovieProductionCompany(923, "Legendary Pictures"))
+    ),
 )
 
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun MovieDetailContentPreview() {
-    FilmioTheme { MovieDetailScreen(MovieDetailState(movie = previewMovie, isLoading = false), {}) }
+    FilmioTheme { MovieDetailScreen(MovieDetailState(movie = previewMovie, isFavorite = true, isLoading = false), {}) }
 }
 
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun MovieDetailDarkPreview() {
-    FilmioTheme(darkTheme = true) { MovieDetailScreen(MovieDetailState(movie = previewMovie, isLoading = false), {}) }
+    FilmioTheme(darkTheme = true) { MovieDetailScreen(MovieDetailState(movie = previewMovie, isFavorite = true, isLoading = false), {}) }
 }
 
 @Preview(showBackground = true, widthDp = 1024, heightDp = 820)
@@ -386,19 +448,57 @@ private fun MovieDetailSummaryPreview() {
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun MovieDetailCachedErrorPreview() {
-    FilmioTheme { MovieDetailScreen(MovieDetailState(movie = previewMovie, isLoading = false,
-        isConnected = false, error = UiText.Resource(R.string.error_offline)), {}) }
+    FilmioTheme {
+        MovieDetailScreen(
+            MovieDetailState(
+                movie = previewMovie, isFavorite = true, isLoading = false,
+                isConnected = false, error = UiText.Resource(R.string.error_offline)
+            ), {})
+    }
 }
 
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun MovieDetailUncachedErrorPreview() {
-    FilmioTheme { MovieDetailScreen(MovieDetailState(isLoading = false, isConnected = false,
-        error = UiText.Resource(R.string.error_offline)), {}) }
+    FilmioTheme {
+        MovieDetailScreen(
+            MovieDetailState(
+                isLoading = false, isConnected = false,
+                error = UiText.Resource(R.string.error_offline)
+            ), {})
+    }
 }
 
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun MovieDetailLoadingPreview() {
     FilmioTheme { MovieDetailScreen(MovieDetailState(isLoading = true), {}) }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun MovieDetailFavoriteUnsavedPreview() {
+    FilmioTheme { MovieDetailScreen(MovieDetailState(movie = previewMovie, isFavorite = false), {}) }
+}
+
+@Preview(showBackground = true, widthDp = 1024, heightDp = 820)
+@Composable
+private fun MovieDetailFavoriteSavedPreview() {
+    FilmioTheme(darkTheme = true) {
+        MovieDetailScreen(
+            MovieDetailState(
+                movie = previewMovie, isFavorite = true,
+            ), {})
+    }
+}
+
+@Preview(showBackground = true, widthDp = 320, heightDp = 844, fontScale = 2f)
+@Composable
+private fun MovieDetailFavoriteLargeTextPreview() {
+    FilmioTheme {
+        MovieDetailScreen(
+            MovieDetailState(
+                movie = previewMovie,
+            ), {})
+    }
 }

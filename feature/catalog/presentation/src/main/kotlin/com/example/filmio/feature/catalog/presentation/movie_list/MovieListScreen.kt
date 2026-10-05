@@ -1,5 +1,8 @@
 package com.example.filmio.feature.catalog.presentation.movie_list
 
+import androidx.compose.material3.FilterChip
+import androidx.compose.ui.semantics.selected
+import com.example.filmio.feature.catalog.presentation.components.FavoriteControl
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -7,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,12 +47,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -89,7 +92,6 @@ import com.example.filmio.core.presentation.util.ObserveAsEvents
 import com.example.filmio.core.presentation.util.UiText
 import com.example.filmio.feature.catalog.domain.model.Movie
 import com.example.filmio.feature.catalog.presentation.R
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import org.koin.androidx.compose.koinViewModel
@@ -102,12 +104,18 @@ fun MovieListRoot(
 ) {
     val movieFlow by viewModel.movies.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val homeScroll = rememberLazyListState()
-    val searchScroll = rememberSaveable(movieFlow, saver = LazyListState.Saver) { LazyListState() }
-    var homeIndex by rememberSaveable { mutableIntStateOf(0) }
-    var homeOffset by rememberSaveable { mutableIntStateOf(0) }
-    var homeAnchorId by rememberSaveable { mutableLongStateOf(0) }
-    var restoredHomeFlow by remember { mutableStateOf<Flow<PagingData<Movie>>?>(null) }
+    // Compose-owned viewport memories are independent for each scope and query mode.
+    val query = state.queryTextState.text.toString().trim()
+    val allAnchor = rememberSaveable(saver = CatalogScrollAnchor.Saver) { CatalogScrollAnchor() }
+    val savedAnchor = rememberSaveable(saver = CatalogScrollAnchor.Saver) { CatalogScrollAnchor() }
+    val allSearchAnchor = rememberSaveable(query, saver = CatalogScrollAnchor.Saver) { CatalogScrollAnchor() }
+    val savedSearchAnchor = rememberSaveable(query, saver = CatalogScrollAnchor.Saver) { CatalogScrollAnchor() }
+    val anchor = when {
+        state.catalogView == CatalogView.SAVED && state.isSearchActive -> savedSearchAnchor
+        state.catalogView == CatalogView.SAVED -> savedAnchor
+        state.isSearchActive -> allSearchAnchor
+        else -> allAnchor
+    }
     // Key only the presenter. Recreating the TextField here loses focus during typing.
     val movies = key(movieFlow) { movieFlow.collectAsLazyPagingItems() }
     val currentGeneration by rememberUpdatedState(state.generation)
@@ -119,28 +127,40 @@ fun MovieListRoot(
         }
     }
     ObservePagingLoadStates(viewModel, movies, state.generation)
-    if (!state.isSearchActive) {
-        RestoreCatalogScroll(
-            movies, homeScroll, homeIndex, homeOffset, homeAnchorId,
-            needed = restoredHomeFlow !== movieFlow,
-            onRestored = { restoredHomeFlow = movieFlow })
-        LaunchedEffect(movies, homeScroll, restoredHomeFlow) {
-            if (restoredHomeFlow !== movieFlow) return@LaunchedEffect
-            snapshotFlow {
-                val index = homeScroll.firstVisibleItemIndex
-                val anchorId = if (index < movies.itemCount) movies.peek(index)?.id else null
-                Triple(index, homeScroll.firstVisibleItemScrollOffset, anchorId ?: 0L)
-            }.collect { (index, offset, anchorId) ->
-                homeIndex = index
-                homeOffset = offset
-                homeAnchorId = anchorId
-            }
+    RestoreCatalogScroll(
+        movies, anchor.scroll, anchor.index, anchor.offset, anchor.id,
+        needed = anchor.restoredItems !== movies,
+        onRestored = { anchor.restoredItems = movies })
+    LaunchedEffect(movies, anchor, anchor.restoredItems) {
+        if (anchor.restoredItems !== movies) return@LaunchedEffect
+        snapshotFlow {
+            val index = anchor.scroll.firstVisibleItemIndex
+            val id = if (index < movies.itemCount) movies.peek(index)?.id else null
+            Triple(index, anchor.scroll.firstVisibleItemScrollOffset, id ?: 0L)
+        }.collect { (index, offset, id) ->
+            anchor.index = index; anchor.offset = offset; anchor.id = id
         }
     }
     MovieListScreen(
         state, movies, viewModel::onAction, modifier,
-        listState = if (state.isSearchActive) searchScroll else homeScroll
+        listState = anchor.scroll
     )
+}
+
+/** Only viewport state is saved here; movie content and query ownership remain in the ViewModel. */
+private class CatalogScrollAnchor(var index: Int = 0, var offset: Int = 0, var id: Long = 0) {
+    val scroll = LazyListState(index, offset)
+
+    // A retained Flow still creates a new presenter when returning to its scope.
+    // Wait for that presenter's rows before recording a replacement viewport.
+    var restoredItems by mutableStateOf<LazyPagingItems<Movie>?>(null)
+
+    companion object {
+        val Saver = listSaver<CatalogScrollAnchor, Long>(
+            save = { listOf(it.index.toLong(), it.offset.toLong(), it.id) },
+            restore = { CatalogScrollAnchor(it[0].toInt(), it[1].toInt(), it[2]) },
+        )
+    }
 }
 
 /** Request cached items through Paging's accessor until the saved viewport can be restored.
@@ -151,12 +171,18 @@ private fun RestoreCatalogScroll(
     movies: LazyPagingItems<Movie>, scroll: LazyListState, index: Int, offset: Int, anchorId: Long,
     needed: Boolean, onRestored: () -> Unit,
 ) {
-    LaunchedEffect(movies) {
+    LaunchedEffect(movies, scroll) {
         if (!needed) return@LaunchedEffect
         if (anchorId == 0L && index == 0 && offset == 0) {
             onRestored(); return@LaunchedEffect
         }
-        snapshotFlow { movies.itemCount }.first { it > 0 }
+        snapshotFlow { movies.itemCount to movies.loadState }.first { (count, loads) ->
+            count > 0 || loads.source.refresh is LoadState.Error ||
+                    (loads.source.refresh is LoadState.NotLoading && loads.source.append.endOfPaginationReached)
+        }
+        if (movies.itemCount == 0) {
+            onRestored(); return@LaunchedEffect
+        }
         fun anchorIndex() = movies.itemSnapshotList.items.indexOfFirst { it.id == anchorId }
         while (if (anchorId > 0) anchorIndex() < 0 else movies.itemCount <= index) {
             val before = movies.itemCount
@@ -204,10 +230,12 @@ fun MovieListScreen(
             val posterWidth = if (maxWidth < 360.dp) 88.dp else 104.dp
             val rowGap = if (maxWidth < 360.dp) 12.dp else 16.dp
             val compactHeader = maxHeight < 480.dp || isScrolled || largeText
-            Column(Modifier
-                .widthIn(max = 680.dp)
-                .fillMaxSize()
-                .padding(horizontal = 24.dp)) {
+            Column(
+                Modifier
+                    .widthIn(max = 680.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp)
+            ) {
                 CatalogHeader(
                     compact = compactHeader,
                     refreshEnabled = !state.isDebouncing && !state.isRefreshing && !state.isInitialLoading,
@@ -251,9 +279,15 @@ fun MovieListScreen(
                     )
 
                     state.isEmpty && !hasContent -> ContentFeedback(
-                        title = if (!state.isSearchActive) R.string.empty_movies_title else R.string.no_movies_found_title,
-                        message = stringResource(if (!state.isSearchActive) R.string.empty_movies else R.string.no_movies_found),
-                        actionLabel = R.string.refresh,
+                        title = if (state.catalogView == CatalogView.SAVED) {
+                            if (state.isSearchActive) R.string.no_saved_matches_title else R.string.empty_saved_title
+                        } else if (!state.isSearchActive) R.string.empty_movies_title else R.string.no_movies_found_title,
+                        message = stringResource(
+                            if (state.catalogView == CatalogView.SAVED) {
+                                if (state.isSearchActive) R.string.no_saved_matches else R.string.empty_saved
+                            } else if (!state.isSearchActive) R.string.empty_movies else R.string.no_movies_found
+                        ),
+                        actionLabel = R.string.refresh.takeIf { state.catalogView == CatalogView.ALL },
                         enabled = !state.isRefreshing,
                         onClick = { onAction(MovieListAction.OnRefreshClick(state.generation)) },
                         modifier = Modifier.weight(1f),
@@ -282,9 +316,12 @@ fun MovieListScreen(
                             }
                             items(count = movies.itemCount, key = movies.itemKey { it.id }) { index ->
                                 movies[index]?.let { movie ->
-                                    MovieRow(movie, posterWidth, rowGap, largeText) {
-                                        onAction(MovieListAction.OnMovieClick(movie.id))
-                                    }
+                                    MovieRow(
+                                        movie, posterWidth, rowGap, largeText,
+                                        favorite = state.favoriteIds?.contains(movie.id),
+                                        favoriteEnabled = movie.id > 0,
+                                        onSetFavorite = { onAction(MovieListAction.OnSetFavorite(movie.id, it)) },
+                                        onClick = { onAction(MovieListAction.OnMovieClick(movie.id)) })
                                 }
                             }
                             if (state.isAppending) {
@@ -312,9 +349,11 @@ private fun CatalogHeader(
     compact: Boolean, refreshEnabled: Boolean, onRefresh: () -> Unit,
     state: MovieListState, onAction: (MovieListAction) -> Unit,
 ) {
-    Column(Modifier
-        .fillMaxWidth()
-        .padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Text(
             stringResource(R.string.filmio_wordmark), color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 2.sp),
@@ -331,14 +370,15 @@ private fun CatalogHeader(
             Spacer(Modifier.height(8.dp))
         }
         val keyboard = LocalSoftwareKeyboardController.current
-        val searchDescription = stringResource(R.string.search_movies)
+        val searchDescription =
+            stringResource(if (state.catalogView == CatalogView.SAVED) R.string.search_saved_movies else R.string.search_movies)
         TextField(
             state = state.queryTextState,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp)
                 .semantics { contentDescription = searchDescription },
-            placeholder = { Text(stringResource(R.string.search_movies)) },
+            placeholder = { Text(stringResource(if (state.catalogView == CatalogView.SAVED) R.string.search_saved_movies else R.string.search_movies)) },
             lineLimits = TextFieldLineLimits.SingleLine,
             shape = RoundedCornerShape(16.dp),
             colors = TextFieldDefaults.colors(
@@ -357,15 +397,47 @@ private fun CatalogHeader(
                 }
             } else null,
         )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CatalogView.entries.forEach { view ->
+                val label = if (view == CatalogView.ALL) R.string.catalog_all else R.string.saved
+                if (view == state.catalogView) {
+                    FilledTonalButton(
+                        onClick = { onAction(MovieListAction.OnCatalogViewChange(view)) },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { selected = true }) {
+                        if (view == CatalogView.SAVED) {
+                            Icon(painterResource(R.drawable.ic_bookmark), null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                        }
+                        Text(stringResource(label))
+                    }
+                } else {
+                    TextButton(
+                        onClick = { onAction(MovieListAction.OnCatalogViewChange(view)) },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .semantics { selected = false }) {
+                        if (view == CatalogView.SAVED) {
+                            Icon(painterResource(R.drawable.ic_bookmark), null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                        }
+                        Text(stringResource(label))
+                    }
+                }
+            }
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                stringResource(if (!state.isSearchActive) R.string.stored_movies else R.string.search_results),
+                stringResource(if (state.catalogView == CatalogView.SAVED) R.string.saved_movies else if (!state.isSearchActive) R.string.stored_movies else R.string.search_results),
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier
                     .weight(1f)
                     .semantics { heading() },
             )
-            TextButton(onClick = onRefresh, enabled = refreshEnabled, modifier = Modifier.heightIn(min = 48.dp)) {
+            if (state.catalogView == CatalogView.ALL) TextButton(
+                onClick = onRefresh,
+                enabled = refreshEnabled,
+                modifier = Modifier.heightIn(min = 48.dp)
+            ) {
                 Text(stringResource(R.string.refresh))
             }
         }
@@ -373,7 +445,16 @@ private fun CatalogHeader(
 }
 
 @Composable
-private fun MovieRow(movie: Movie, posterWidth: Dp, gap: Dp, largeText: Boolean, onClick: () -> Unit) {
+private fun MovieRow(
+    movie: Movie,
+    posterWidth: Dp,
+    gap: Dp,
+    largeText: Boolean,
+    favorite: Boolean?,
+    favoriteEnabled: Boolean,
+    onSetFavorite: (Boolean) -> Unit,
+    onClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -383,10 +464,15 @@ private fun MovieRow(movie: Movie, posterWidth: Dp, gap: Dp, largeText: Boolean,
     ) {
         MoviePoster(movie.posterUrl, posterWidth)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                movie.title, style = MaterialTheme.typography.titleMedium,
-                maxLines = if (largeText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    modifier = Modifier.weight(1f),
+                    text = movie.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = if (largeText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
+                )
+                FavoriteControl(movie.title, favorite, favoriteEnabled, onSetFavorite, compact = true)
+            }
             MovieRating(movie.voteAverage, movie.voteCount)
             Text(
                 movie.overview?.takeIf { it.isNotBlank() } ?: stringResource(R.string.no_description),
@@ -457,33 +543,47 @@ private fun MovieRating(score: Double?, votes: Int?) {
 
 @Composable
 private fun MovieRowSkeleton(posterWidth: Dp, gap: Dp) {
-    Row(Modifier
-        .fillMaxWidth()
-        .padding(vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(gap)) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(gap)
+    ) {
         Box(
             Modifier
                 .width(posterWidth)
                 .aspectRatio(2f / 3f)
                 .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp)),
         )
-        Column(Modifier
-            .weight(1f)
-            .padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SkeletonLine(Modifier
-                .fillMaxWidth(0.9f)
-                .height(20.dp))
-            SkeletonLine(Modifier
-                .width(72.dp)
-                .height(24.dp))
-            SkeletonLine(Modifier
-                .fillMaxWidth()
-                .height(12.dp))
-            SkeletonLine(Modifier
-                .fillMaxWidth(0.9f)
-                .height(12.dp))
-            SkeletonLine(Modifier
-                .fillMaxWidth(0.6f)
-                .height(12.dp))
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SkeletonLine(
+                Modifier
+                    .fillMaxWidth(0.9f)
+                    .height(20.dp)
+            )
+            SkeletonLine(
+                Modifier
+                    .width(72.dp)
+                    .height(24.dp)
+            )
+            SkeletonLine(
+                Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+            )
+            SkeletonLine(
+                Modifier
+                    .fillMaxWidth(0.9f)
+                    .height(12.dp)
+            )
+            SkeletonLine(
+                Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(12.dp)
+            )
         }
     }
 }
@@ -503,9 +603,11 @@ private fun LoadingFeedback(label: Int) {
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CircularProgressIndicator(Modifier
-            .size(16.dp)
-            .clearAndSetSemantics {}, strokeWidth = 2.dp)
+        CircularProgressIndicator(
+            Modifier
+                .size(16.dp)
+                .clearAndSetSemantics {}, strokeWidth = 2.dp
+        )
         Text(
             stringResource(label), style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -592,7 +694,7 @@ private val previewMovies = listOf(
 private fun MovieListContentPreview() {
     FilmioTheme {
         MovieListScreen(
-            MovieListState(isInitialLoading = false),
+            MovieListState(isInitialLoading = false, favoriteIds = setOf(1)),
             remember { MutableStateFlow(PagingData.from(previewMovies)) }.collectAsLazyPagingItems(),
             onAction = {})
     }
@@ -615,7 +717,7 @@ private fun MovieListWidePreview() {
 private fun MovieListDarkPreview() {
     FilmioTheme(darkTheme = true) {
         MovieListScreen(
-            MovieListState(isInitialLoading = false),
+            MovieListState(isInitialLoading = false, favoriteIds = setOf(1)),
             remember { MutableStateFlow(PagingData.from(previewMovies)) }.collectAsLazyPagingItems(),
             onAction = {})
     }
@@ -703,5 +805,42 @@ private fun MovieSearchCachedFailurePreview() {
                 refreshError = UiText.Resource(R.string.error_service)
             ),
             remember { MutableStateFlow(PagingData.from(previewMovies.take(1))) }.collectAsLazyPagingItems(), onAction = {})
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun MovieListSavedEmptyPreview() {
+    FilmioTheme {
+        MovieListScreen(
+            MovieListState(
+                catalogView = CatalogView.SAVED, favoriteIds = emptySet(),
+                isInitialLoading = false, isEmpty = true
+            ),
+            remember { MutableStateFlow(PagingData.empty<Movie>()) }.collectAsLazyPagingItems(), {})
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun MovieListFavoriteSavedPreview() {
+    FilmioTheme(darkTheme = true) {
+        MovieListScreen(
+            MovieListState(
+                favoriteIds = setOf(1L), isInitialLoading = false
+            ),
+            remember { MutableStateFlow(PagingData.from(previewMovies)) }.collectAsLazyPagingItems(), {})
+    }
+}
+
+@Preview(showBackground = true, widthDp = 320, heightDp = 844, fontScale = 2f)
+@Composable
+private fun MovieListFavoriteLargeTextPreview() {
+    FilmioTheme {
+        MovieListScreen(
+            MovieListState(
+                favoriteIds = setOf(1L), isInitialLoading = false,
+            ),
+            remember { MutableStateFlow(PagingData.from(previewMovies)) }.collectAsLazyPagingItems(), {})
     }
 }

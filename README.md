@@ -6,7 +6,7 @@ movies in local alphabetical order, pages through TMDB popular movies, supports
 Refresh/Retry and active reconnect, and keeps cached content usable offline. Selecting a
 movie opens a restorable detail screen backed by the same persistent catalog. Inline
 movie search reads cached matches immediately and requests TMDB after a fixed
-500 ms quiet period.
+500 ms quiet period. Movies can be saved offline from rows or details; Saved is a local-only collection with local search.
 
 ## Setup
 
@@ -55,13 +55,13 @@ do not print private properties, headers, tokens, or remote error bodies.
 - `catalog:database` owns five Room v1 tables and persistent `filmio-catalog.db`.
   Refresh/append add or update summaries without deleting omitted movies, details, or
   favorites. Duplicate IDs use the last supplied values; null entries are skipped;
-  a batch shares one clock timestamp. The schema and DAO SQL are unchanged.
+  a batch shares one clock timestamp. The five-table schema is unchanged; the favorite DAO adds membership observation, desired-state transactions, and bound local search.
 - `core:data` owns shared Retrofit failure mapping. Catalog data maps expected SQLite
   write errors; cancellation and unexpected defects propagate. Presentation localizes
   the safe typed errors and uses generic storage feedback for unrecognized source failures.
 - `catalog:presentation` caches the current query's stream in a cancellable ViewModel scope. Its state projects source
   and mediator loading/errors plus confirmed empty, without mirroring the movie list or
-  fetching pages independently. Empty requires successful local and remote refresh outcomes.
+  fetching pages independently. All empty requires successful local and remote refresh outcomes; Saved empty requires only successful local loading.
   Refresh and Retry emit distinct commands through `ObserveAsEvents` to the active
   root's same Paging collection.
   Indexed rows use stable ID keys and remembered list state, retaining content during
@@ -84,8 +84,7 @@ do not print private properties, headers, tokens, or remote error bodies.
   wrapper/revision counter. The outer `StateFlow` selects that Flow on query changes;
   the inner Flow emits PagingData for the selected query. `isSearchActive` selects
   search UI, while `isDebouncing` only marks the 500 ms wait before remote paging. Navigation 3 retains the list ViewModel for details Back;
-  `SavedStateHandle` restores editor text after process recreation. Clear builds
-  a fresh Home Pager and restores its visible movie ID and pixel offset. Search commits
+  `SavedStateHandle` restores editor text after process recreation. Clear returns to the selected retained All/Saved Pager and restores its visible movie ID and pixel offset. Search commits
   remain in Home and preserve details/favorites. Retry, Refresh, and active reconnect
   target current content without bypassing debounce. Offline no-match feedback says
   no cached matches; online empty is confirmed only after successful remote exhaustion.
@@ -105,9 +104,10 @@ do not print private properties, headers, tokens, or remote error bodies.
   Room. The injected clock supplies commit timestamps.
 - A detail ViewModel prevents overlapping work and repeats entry fetching only for a new
   destination. Expected local-read errors use a safe domain exception and terminate
-  observation. The last movie stays visible, and storage feedback takes precedence. Active reconnect restarts failed observation and fetches
-  again; command success cannot clear a read error or provide direct network content.
-  Detail state has one `isLoading` flag and one nullable `error: UiText?`. Back is its only action.
+  observation. The last movie stays visible, and storage feedback takes precedence. Local
+  observation restarts on a new state subscription. Active reconnect retries only the
+  network fetch; command success cannot clear a read error or provide direct network content.
+  Detail network/content state has one `isLoading` flag and one nullable `error: UiText?`; favorite read/write feedback is independent. Back and local favorite actions remain available without waiting for network recovery.
   Popping cancels owned work; reopening fetches again.
 - `app` assembles persistent storage, private BuildConfig configuration, existing Koin
   modules, and a single-activity Navigation 3 host. Serializable list/detail keys save only
@@ -121,9 +121,45 @@ nulls, and numeric zero. Missing token does not add a credential-presence gate.
 The list uses flat poster-and-summary rows, ratings, and the green Filmio light/dark theme.
 Missing or failed posters retain a neutral 2:3 placeholder. Details use a 16:9 backdrop and include ratings/votes and selected runtime,
 release, genre, company, collection, and other metadata with unknown-value fallbacks.
-Credits/review authors, series search/content-type selection, and local favorite UI/operations
-remain assignment work. Background synchronization and list freshness are outside
+Credits/review authors and series search/content-type selection remain assignment work. Background synchronization and list freshness are outside
 this change. Stored image paths alone do not guarantee offline artwork.
+
+## Local saved movies
+
+`CatalogRepository` exposes cold `observeFavoriteMovieIds` and positive-ID
+`observeIsMovieFavorite`, `setMovieFavorite(id, desired)`, and
+`getPagedSavedMovies(query = "")`. Writes are idempotent and complete after commit.
+Saving requires a cached summary; no favorite operation downloads content or calls TMDB.
+Repeated save preserves the original time; removing then re-saving gets a new clock time.
+Unsave retains summaries/details. Saved reads current canonical summaries ordered by
+saved time descending, then ID ascending, through its own mediator-free Pager.
+
+Row and detail controls acknowledge a valid tap immediately with temporary pending state.
+Committed Room membership drives cross-screen updates and Saved row removal. Pending
+feedback clears after successful completion and a fresh one-shot local read of the
+latest committed membership, including newer conflicting commits. Continuous favorite
+observation follows the shared state subscription. Same-movie taps
+are guarded; different list movies remain operable. Write failures roll back the control
+and offer Retry for the exact desired state. Favorite read failures retain last known
+display data, disable toggles, and offer a local resubscription independently of TMDB.
+Pending state is never restored; restored consumers observe the committed database.
+
+All/Saved selection and query restore through SavedStateHandle. Each scope and query mode
+keeps its own scroll anchor; blank All/Saved streams are cached and retained. All search
+keeps immediate local matches plus committed remote IDs and 500 ms debounce. Saved
+search applies bound literal matching to the saved join before paging, keeps saved-time
+order, and has no remote request, membership expansion, debounce, or Refresh button.
+Scope changes cancel obsolete search sessions; Clear restores the selected collection.
+An earlier All request can finish safely; its feedback cannot replace Saved state.
+
+The catalog database and SQLite sidecars are excluded from legacy cloud backup and
+modern cloud backup/device transfer. Membership survives process death and restart on
+this installation, but is not promised after uninstall, clearing data, or device transfer.
+Room version 1, all entities/indexes/foreign keys, and the exported identity hash are
+unchanged. Saving does not guarantee downloaded artwork or fetched extended details.
+
+See [the Saved verification record](docs/verification/local-saved-movies.md) for JVM
+coordination coverage and separate real app observations.
 
 ## Verification
 

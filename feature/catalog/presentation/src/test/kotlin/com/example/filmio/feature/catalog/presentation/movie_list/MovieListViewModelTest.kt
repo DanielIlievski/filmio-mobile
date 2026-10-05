@@ -307,6 +307,11 @@ private fun loads(
 }
 
 private class FakeCatalogRepository : CatalogRepository {
+    override fun observeFavoriteMovieIds() = kotlinx.coroutines.flow.flowOf(emptySet<Long>())
+    override fun observeIsMovieFavorite(movieId: Long) = kotlinx.coroutines.flow.flowOf(false)
+    override fun getPagedSavedMovies(query: String) = kotlinx.coroutines.flow.flowOf(PagingData.empty<Movie>())
+    override suspend fun setMovieFavorite(movieId: Long, isFavorite: Boolean): com.example.filmio.core.domain.EmptyResult<DataError.Local> = com.example.filmio.core.domain.Result.Success(Unit)
+
     override fun searchMovies(query: String, fetchRemote: Boolean): Flow<PagingData<Movie>> = error("Unused")
     override suspend fun fetchMovieDetails(movieId: Long) = error("Unused")
     override fun getMovieDetails(movieId: Long): Flow<Movie?> = error("Unused")

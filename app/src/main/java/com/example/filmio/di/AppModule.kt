@@ -11,5 +11,6 @@ val appModule = module {
     single { createCatalogDatabase(androidContext()) }
     single { get<CatalogDatabase>().movieDao() }
     single { get<CatalogDatabase>().movieDetailDao() }
+    single { get<CatalogDatabase>().movieFavoriteDao() }
     single { TmdbConfig(BuildConfig.TMDB_READ_ACCESS_TOKEN) }
 }
