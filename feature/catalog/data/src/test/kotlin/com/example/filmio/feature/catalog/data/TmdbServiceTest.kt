@@ -32,6 +32,33 @@ class TmdbServiceTest {
     }
     @After fun close() { server.shutdown() }
 
+    @Test fun searchRequestEncodesQueryOnceAndUsesExistingAuthorization() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"page":3,"total_pages":4,"results":[{"id":42,"title":"Love & War"},null]}"""))
+        val response = service.searchMovies("Love & War", 3, "en-US", false)
+        assertEquals(42L, response.results.first()!!.id)
+        assertEquals(4, response.totalPages)
+        assertNull(response.results.last())
+        val request = server.takeRequest(2, TimeUnit.SECONDS)!!
+        val url = request.requestUrl!!
+        assertEquals("/3/search/movie", url.encodedPath)
+        assertEquals(setOf("query", "page", "language", "include_adult"), url.queryParameterNames)
+        assertEquals("Love & War", url.queryParameter("query"))
+        assertEquals("3", url.queryParameter("page"))
+        assertEquals("en-US", url.queryParameter("language"))
+        assertEquals("false", url.queryParameter("include_adult"))
+        assertEquals("Bearer fake-test-token", request.getHeader("Authorization"))
+    }
+
+    @Test fun searchFailureAndMalformedRequiredFieldsUseSafeBoundary() = runBlocking {
+        for ((body, status, error) in listOf(
+            Triple("{}", 429, DataError.Network.TOO_MANY_REQUESTS),
+            Triple("""{"page":1,"results":[{"id":42}]}""", 200, DataError.Network.SERIALIZATION),
+        )) {
+            server.enqueue(MockResponse().setResponseCode(status).setBody(body))
+            assertEquals(Result.Error(error), safeCall { service.searchMovies("Inter", 1, "en-US", false) })
+        }
+    }
+
     @Test fun blankTokenStillMakesRequestAndHttpResponseDeterminesAuthorizationFailure() = runBlocking {
         val blankConfig = TmdbConfig("", server.url("/3/").toString())
         val blankService = createTmdbRetrofit(createTmdbClient(blankConfig), createTmdbMoshi(), blankConfig)

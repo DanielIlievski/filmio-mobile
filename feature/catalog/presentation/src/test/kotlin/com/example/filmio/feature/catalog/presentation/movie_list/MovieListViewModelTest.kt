@@ -1,5 +1,6 @@
 package com.example.filmio.feature.catalog.presentation.movie_list
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.paging.CombinedLoadStates
 import androidx.paging.LoadState
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -43,7 +45,11 @@ class MovieListViewModelTest {
     private val store = ViewModelStore()
     private val connectivity = FakeConnectivityObserver()
     private val repository = FakeCatalogRepository()
-    private fun vm(observer: ConnectivityObserver = connectivity) = MovieListViewModel(repository, observer).also { store.put("list", it) }
+    private fun TestScope.vm(observer: ConnectivityObserver = connectivity) = MovieListViewModel(repository, observer, SavedStateHandle()).also { viewModel ->
+        store.put("list", viewModel)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.state.collect { } }
+        runCurrent()
+    }
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun cleanup() { store.clear(); Dispatchers.resetMain() }
 
@@ -51,6 +57,7 @@ class MovieListViewModelTest {
         val vm = vm()
         val seen = mutableListOf<MovieListEvent>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.events.collect { seen += it } }
+        runCurrent()
         val initial = vm.state.value
         vm.onAction(MovieListAction.OnMovieClick(42))
         vm.onAction(MovieListAction.OnMovieClick(0))
@@ -62,10 +69,10 @@ class MovieListViewModelTest {
 
     @Test fun defaultsAndLocalOnlyCompletionNeverShowFalseEmpty() = runTest(dispatcher) {
         val vm = vm()
-        vm.onAction(loads())
+        vm.onAction(loads()); runCurrent()
         assertTrue(vm.state.value.isInitialLoading)
         assertFalse(vm.state.value.isEmpty)
-        vm.onAction(loads(remote = LoadState.Loading))
+        vm.onAction(loads(remote = LoadState.Loading)); runCurrent()
         assertTrue(vm.state.value.isInitialLoading)
         assertFalse(vm.state.value.isEmpty)
     }
@@ -73,10 +80,10 @@ class MovieListViewModelTest {
     @Test fun successfulEmptyWaitsForBothSourcesInEitherSignalOrder() = runTest(dispatcher) {
         for (localFirst in listOf(true, false)) {
             val vm = vm()
-            vm.onAction(loads(source = LoadState.Loading, remote = LoadState.Loading))
+            vm.onAction(loads(source = LoadState.Loading, remote = LoadState.Loading)); runCurrent()
             vm.onAction(if (localFirst) loads(remote = LoadState.Loading) else loads(source = LoadState.Loading))
             assertFalse(vm.state.value.isEmpty)
-            vm.onAction(loads())
+            vm.onAction(loads()); runCurrent()
             assertTrue(vm.state.value.isEmpty)
             assertFalse(vm.state.value.isInitialLoading)
         }
@@ -86,9 +93,9 @@ class MovieListViewModelTest {
         val localError = LoadState.Error(IllegalStateException("private database detail"))
         for (localFirst in listOf(true, false)) {
             val vm = vm()
-            vm.onAction(loads(source = LoadState.Loading, remote = LoadState.Loading))
+            vm.onAction(loads(source = LoadState.Loading, remote = LoadState.Loading)); runCurrent()
             vm.onAction(if (localFirst) loads(source = localError, remote = LoadState.Loading) else loads(source = LoadState.Loading))
-            vm.onAction(loads(source = localError))
+            vm.onAction(loads(source = localError)); runCurrent()
             assertEquals(R.string.error_storage, (vm.state.value.refreshError as UiText.Resource).id)
             assertFalse(vm.state.value.isEmpty)
         }
@@ -97,24 +104,24 @@ class MovieListViewModelTest {
     @Test fun offlineWithoutCacheIsUnavailableAndCachedRefreshAndAppendErrorsAreSeparate() = runTest(dispatcher) {
         val vm = vm()
         val offline = LoadState.Error(CatalogPagingException(DataError.Network.NO_INTERNET))
-        vm.onAction(loads(remote = offline))
+        vm.onAction(loads(remote = offline)); runCurrent()
         assertFalse(vm.state.value.isEmpty)
         assertFalse(vm.state.value.isInitialLoading)
         assertEquals(R.string.error_offline, (vm.state.value.refreshError as UiText.Resource).id)
-        vm.onAction(loads(remote = offline, hasItems = true))
+        vm.onAction(loads(remote = offline, hasItems = true)); runCurrent()
         assertNotNull(vm.state.value.refreshError)
-        vm.onAction(loads(remoteAppend = offline, hasItems = true))
+        vm.onAction(loads(remoteAppend = offline, hasItems = true)); runCurrent()
         assertNull(vm.state.value.refreshError)
         assertEquals(R.string.error_offline, (vm.state.value.appendError as UiText.Resource).id)
-        vm.onAction(loads(sourceAppend = LoadState.Error(IllegalStateException("private")), remoteAppend = offline, hasItems = true))
+        vm.onAction(loads(sourceAppend = LoadState.Error(IllegalStateException("private")), remoteAppend = offline, hasItems = true)); runCurrent()
         assertEquals(R.string.error_storage, (vm.state.value.appendError as UiText.Resource).id)
     }
 
     @Test fun settledTerminalRefreshDoesNotRequireSeeingTransientLoadingAndSurvivesRecollection() = runTest(dispatcher) {
         val vm = vm()
-        vm.onAction(loads(remoteAppend = LoadState.NotLoading(true)))
+        vm.onAction(loads(remoteAppend = LoadState.NotLoading(true))); runCurrent()
         assertTrue(vm.state.value.isEmpty)
-        vm.onAction(loads())
+        vm.onAction(loads()); runCurrent()
         assertTrue(vm.state.value.isEmpty)
     }
 
@@ -122,20 +129,20 @@ class MovieListViewModelTest {
         val vm = vm()
         val events = mutableListOf<MovieListEvent>()
         backgroundScope.launch { vm.events.collect { events += it } }
-        vm.onAction(loads(remoteAppend = LoadState.Error(CatalogPagingException(DataError.Network.REQUEST_TIMEOUT)), hasItems = true))
-        vm.onAction(MovieListAction.OnRetryClick)
-        vm.onAction(MovieListAction.OnRetryClick)
+        vm.onAction(loads(remoteAppend = LoadState.Error(CatalogPagingException(DataError.Network.REQUEST_TIMEOUT)), hasItems = true)); runCurrent()
+        vm.onAction(MovieListAction.OnRetryClick())
+        vm.onAction(MovieListAction.OnRetryClick())
         runCurrent()
-        assertEquals(listOf(MovieListEvent.RetryMovies), events)
+        assertEquals(listOf(MovieListEvent.RetryMovies()), events)
         assertTrue(vm.state.value.isAppending)
-        vm.onAction(loads(hasItems = true))
-        vm.onAction(MovieListAction.OnRefreshClick)
-        vm.onAction(MovieListAction.OnRefreshClick)
-        vm.onAction(MovieListAction.OnRetryClick)
+        vm.onAction(loads(hasItems = true)); runCurrent()
+        vm.onAction(MovieListAction.OnRefreshClick())
+        vm.onAction(MovieListAction.OnRefreshClick())
+        vm.onAction(MovieListAction.OnRetryClick())
         runCurrent()
-        assertEquals(listOf(MovieListEvent.RetryMovies, MovieListEvent.RefreshMovies), events)
-        vm.onAction(loads(remote = LoadState.Loading, hasItems = true))
-        vm.onAction(loads(hasItems = true))
+        assertEquals(listOf(MovieListEvent.RetryMovies(), MovieListEvent.RefreshMovies()), events)
+        vm.onAction(loads(remote = LoadState.Loading, hasItems = true)); runCurrent()
+        vm.onAction(loads(hasItems = true)); runCurrent()
         runCurrent()
         assertEquals(2, events.size)
         assertFalse(vm.state.value.isRefreshing)
@@ -161,8 +168,8 @@ class MovieListViewModelTest {
     @Test fun cachedStreamReusesRepositoryWorkAcrossCollectors() = runTest(dispatcher) {
         val vm = vm()
         assertEquals(0, repository.collections)
-        assertEquals(listOf("Arrival"), vm.movies.asSnapshot().map { it.title })
-        assertEquals(listOf("Arrival"), vm.movies.asSnapshot().map { it.title })
+        assertEquals(listOf("Arrival"), vm.movies.value.asSnapshot().map { it.title })
+        assertEquals(listOf("Arrival"), vm.movies.value.asSnapshot().map { it.title })
         assertEquals(1, repository.streams)
         assertEquals(1, repository.collections)
     }
@@ -178,8 +185,8 @@ class MovieListViewModelTest {
         runCurrent()
         connectivity.status.value = true
         runCurrent()
-        assertEquals(listOf(MovieListEvent.RefreshMovies), events)
-        vm.onAction(loads(hasItems = true))
+        assertEquals(listOf(MovieListEvent.RefreshMovies()), events)
+        vm.onAction(loads(hasItems = true)); runCurrent()
         connectivity.status.value = true
         runCurrent()
         assertEquals(1, events.size)
@@ -222,17 +229,17 @@ class MovieListViewModelTest {
 
         assertTrue(collector.isActive)
         assertTrue(events.isEmpty())
-        assertEquals(listOf("Arrival"), vm.movies.asSnapshot().map { it.title })
+        assertEquals(listOf("Arrival"), vm.movies.value.asSnapshot().map { it.title })
 
-        vm.onAction(loads(remote = LoadState.Error(CatalogPagingException(DataError.Network.NO_INTERNET)), hasItems = true))
-        vm.onAction(MovieListAction.OnRetryClick)
+        vm.onAction(loads(remote = LoadState.Error(CatalogPagingException(DataError.Network.NO_INTERNET)), hasItems = true)); runCurrent()
+        vm.onAction(MovieListAction.OnRetryClick())
         runCurrent()
-        assertEquals(listOf(MovieListEvent.RetryMovies), events)
+        assertEquals(listOf(MovieListEvent.RetryMovies()), events)
 
-        vm.onAction(loads(hasItems = true))
-        vm.onAction(MovieListAction.OnRefreshClick)
+        vm.onAction(loads(hasItems = true)); runCurrent()
+        vm.onAction(MovieListAction.OnRefreshClick())
         runCurrent()
-        assertEquals(listOf(MovieListEvent.RetryMovies, MovieListEvent.RefreshMovies), events)
+        assertEquals(listOf(MovieListEvent.RetryMovies(), MovieListEvent.RefreshMovies()), events)
         assertTrue(collector.isActive)
     }
 
@@ -248,7 +255,7 @@ class MovieListViewModelTest {
         val events = mutableListOf<MovieListEvent>()
         backgroundScope.launch { vm.events.collect { events += it } }
         runCurrent()
-        assertEquals(listOf(MovieListEvent.RefreshMovies), events)
+        assertEquals(listOf(MovieListEvent.RefreshMovies()), events)
         assertTrue(vm.state.value.isRefreshing)
     }
 
@@ -268,7 +275,7 @@ class MovieListViewModelTest {
         runCurrent()
         assertEquals(1, received)
 
-        vm.onAction(loads(hasItems = true))
+        vm.onAction(loads(hasItems = true)); runCurrent()
         connectivity.status.value = false
         runCurrent()
         connectivity.status.value = true
@@ -300,6 +307,7 @@ private fun loads(
 }
 
 private class FakeCatalogRepository : CatalogRepository {
+    override fun searchMovies(query: String, fetchRemote: Boolean): Flow<PagingData<Movie>> = error("Unused")
     override suspend fun fetchMovieDetails(movieId: Long) = error("Unused")
     override fun getMovieDetails(movieId: Long): Flow<Movie?> = error("Unused")
     var streams = 0

@@ -3,8 +3,11 @@ package com.example.filmio.feature.catalog.presentation.movie_list
 import androidx.paging.CombinedLoadStates
 
 sealed interface MovieListAction {
+    data object OnClearQuery : MovieListAction
     data class OnMovieClick(val movieId: Long) : MovieListAction
-    data object OnRefreshClick : MovieListAction
-    data object OnRetryClick : MovieListAction
-    data class OnLoadStatesChanged(val loadStates: CombinedLoadStates, val hasItems: Boolean) : MovieListAction
+    data class OnRefreshClick(val generation: Long = 0) : MovieListAction
+    data class OnRetryClick(val generation: Long = 0) : MovieListAction
+    data class OnLoadStatesChanged(
+        val loadStates: CombinedLoadStates, val hasItems: Boolean, val generation: Long = 0,
+    ) : MovieListAction
 }

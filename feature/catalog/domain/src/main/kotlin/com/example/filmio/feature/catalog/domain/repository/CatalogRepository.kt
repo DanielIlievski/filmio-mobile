@@ -9,6 +9,12 @@ import kotlinx.coroutines.flow.Flow
 interface CatalogRepository {
     fun getPagedMovies(): Flow<PagingData<Movie>>
 
+    /** Literal local title matches plus this session's committed remote IDs, in title order.
+     * Local-only reads never wait for HTTP. Blank input produces no matches or requests.
+     * Discoveries also enrich Home; remote membership/continuation are memory-only.
+     */
+    fun searchMovies(query: String, fetchRemote: Boolean = true): Flow<PagingData<Movie>>
+
     /**
      * Refreshes and commits details for a positive ID before returning completion only.
      * Every invocation fetches the latest remote data. Failure preserves cached content.

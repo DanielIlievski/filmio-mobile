@@ -4,7 +4,9 @@ Android-only Kotlin TMDB assignment using Clean Architecture, MVI, Compose Mater
 Retrofit/OkHttp/Moshi, Room, Paging 3, and Koin. The runnable list displays committed
 movies in local alphabetical order, pages through TMDB popular movies, supports
 Refresh/Retry and active reconnect, and keeps cached content usable offline. Selecting a
-movie opens a restorable text detail screen backed by the same persistent catalog.
+movie opens a restorable detail screen backed by the same persistent catalog. Inline
+movie search reads cached matches immediately and requests TMDB after a fixed
+500 ms quiet period.
 
 ## Setup
 
@@ -36,6 +38,7 @@ do not print private properties, headers, tokens, or remote error bodies.
 ## Design and current scope
 
 - `catalog:domain` exposes `Movie`, `CatalogRepository.getPagedMovies(): Flow<PagingData<Movie>>`,
+  `searchMovies(query, fetchRemote)`,
   a safe `CatalogPagingException(DataError)` carrier, and a connectivity Flow contract.
   There are no artificial domain rules or forwarding UseCases.
 - `catalog:data` builds one Pager/mediator per stream. Room supplies every displayed
@@ -56,13 +59,36 @@ do not print private properties, headers, tokens, or remote error bodies.
 - `core:data` owns shared Retrofit failure mapping. Catalog data maps expected SQLite
   write errors; cancellation and unexpected defects propagate. Presentation localizes
   the safe typed errors and uses generic storage feedback for unrecognized source failures.
-- `catalog:presentation` caches one stream in the ViewModel. Its state projects source
+- `catalog:presentation` caches the current query's stream in a cancellable ViewModel scope. Its state projects source
   and mediator loading/errors plus confirmed empty, without mirroring the movie list or
   fetching pages independently. Empty requires successful local and remote refresh outcomes.
   Refresh and Retry emit distinct commands through `ObserveAsEvents` to the active
   root's same Paging collection.
   Indexed rows use stable ID keys and remembered list state, retaining content during
   loading/failure, with append progress/error footers and no success confirmation.
+- Search owns a `TextFieldState`, observes edits with `snapshotFlow`, preserves raw
+  text in `SavedStateHandle`, and ignores
+  whitespace-only request changes. Local reads start immediately; after 500 ms without
+  a different trimmed query, `MovieSearchRemoteMediator` starts page 1 with `en-US`
+  and `include_adult=false`. The fixed `.debounce(500.milliseconds)` lives on the ViewModel’s
+  `searchFlow`; no timing constructor or DI parameter is needed. Empty input makes
+  no search request.
+- Search results combine literal local title/original-title matches with committed
+  remote IDs, deduplicated and ordered by local title/ID. ASCII case is ignored;
+  `%`, `_`, and GLOB pattern characters remain literal. Remote IDs and continuation
+  live only in the active Pager. Commit precedes membership publication and source
+  invalidation. Changing queries cancels the previous scope, and generation tokens
+  reject stale load feedback and queued commands.
+- The pinned search field keeps focus during typing. Local-to-remote switching keeps
+  one query presenter and scroll state, identified by its cached Flow without a content
+  wrapper/revision counter. The outer `StateFlow` selects that Flow on query changes;
+  the inner Flow emits PagingData for the selected query. `isSearchActive` selects
+  search UI, while `isDebouncing` only marks the 500 ms wait before remote paging. Navigation 3 retains the list ViewModel for details Back;
+  `SavedStateHandle` restores editor text after process recreation. Clear builds
+  a fresh Home Pager and restores its visible movie ID and pixel offset. Search commits
+  remain in Home and preserve details/favorites. Retry, Refresh, and active reconnect
+  target current content without bypassing debounce. Offline no-match feedback says
+  no cached matches; online empty is confirmed only after successful remote exhaustion.
 - Active-screen default-network observation refreshes on unavailable-to-available
   transitions. Initial/duplicate connected status is ignored. Event collection starts
   the ViewModel's observation Job and cancels it on completion. Unbuffered reconnect
@@ -93,9 +119,9 @@ never determines a TMDB page number. Mapping preserves supplied whitespace, blan
 nulls, and numeric zero. Missing token does not add a credential-presence gate.
 
 The list uses flat poster-and-summary rows, ratings, and the green Filmio light/dark theme.
-Missing or failed posters retain a neutral 2:3 placeholder. Details use text and include ratings/votes and selected runtime,
+Missing or failed posters retain a neutral 2:3 placeholder. Details use a 16:9 backdrop and include ratings/votes and selected runtime,
 release, genre, company, collection, and other metadata with unknown-value fallbacks.
-Detail artwork, credits/review authors, movie/series search with controllable request rate, and local favorite UI/operations
+Credits/review authors, series search/content-type selection, and local favorite UI/operations
 remain assignment work. Background synchronization and list freshness are outside
 this change. Stored image paths alone do not guarantee offline artwork.
 
@@ -110,6 +136,10 @@ strict decoding, complete mapping, unconditional fetching, expected read/write e
 cache preservation, commit ordering, local-only observations, read recovery, immutable
 IDs, loading/observer scheduling, reconnect recovery, Back, and entry cancellation. Shared network classification
 is tested once in core data. Domain has no business rules requiring separate tests.
+Search tests cover request encoding, bound literal-query construction, immediate local
+reads, commit-before-membership, stale cancellation, debounce boundaries, restoration,
+current-query recovery, and honest empty/offline state. Query/DAO fakes establish
+coordination and construction only; they do not execute Android SQLite.
 
 ```sh
 ./gradlew :core:data:test :feature:catalog:data:testDebugUnitTest \
@@ -153,11 +183,13 @@ Manual walkthrough with private local configuration:
    detail-owned fields and fetched time. Keep source-read failure feedback separate from
    fetch feedback; use the unit tests for controlled SQLite failures.
 
-The performed checks and their limits are recorded in [movie details verification](docs/verification/movie-details.md).
+The performed search checks and their limits are recorded in
+[inline movie search verification](docs/verification/inline-movie-search.md).
 Do not uninstall/clear the normal app between cached offline steps. The exported
 schema is preserved; there is no destructive migration fallback.
 
 Endpoint/authentication references: [TMDB popular movies](https://developer.themoviedb.org/reference/movie-popular-list),
 [TMDB application authentication](https://developer.themoviedb.org/docs/authentication-application),
-[TMDB movie details](https://developer.themoviedb.org/reference/movie-details), and
+[TMDB movie details](https://developer.themoviedb.org/reference/movie-details),
+[TMDB movie search](https://developer.themoviedb.org/reference/search-movie), and
 [Navigation 3 state and ViewModel scoping](https://developer.android.com/guide/navigation/navigation-3/save-state).

@@ -17,6 +17,7 @@ import com.example.filmio.feature.catalog.data.mapping.toDomain
 import com.example.filmio.feature.catalog.data.mapping.toSnapshot
 import com.example.filmio.feature.catalog.data.networking.TmdbService
 import com.example.filmio.feature.catalog.data.paging.AnchoredMoviePagingSource
+import com.example.filmio.feature.catalog.data.paging.MovieSearchRemoteMediator
 import com.example.filmio.feature.catalog.data.paging.MoviesRemoteMediator
 import com.example.filmio.feature.catalog.database.dao.MovieDao
 import com.example.filmio.feature.catalog.database.dao.MovieDetailDao
@@ -45,6 +46,25 @@ class OfflineFirstCatalogRepository(
             config = PagingConfig(pageSize = 20, initialLoadSize = 20, enablePlaceholders = false, prefetchDistance = 1),
             remoteMediator = mediator,
             pagingSourceFactory = { AnchoredMoviePagingSource(movieDao.pagingSource()).also { activeSource = it } },
+        ).flow.map { data ->
+            data.map { it.toDomain() }
+        }
+    }
+
+    @OptIn(ExperimentalPagingApi::class)
+    override fun searchMovies(query: String, fetchRemote: Boolean): Flow<PagingData<Movie>> {
+        val trimmedQuery = query.trim()
+        var activeSource: PagingSource<Int, MovieEntity>? = null
+        val mediator = if (fetchRemote && trimmedQuery.isNotEmpty()) {
+            MovieSearchRemoteMediator(trimmedQuery, service, movieDao, clock) { activeSource?.invalidate() }
+        } else null
+        return Pager(
+            config = PagingConfig(pageSize = 20, initialLoadSize = 20, enablePlaceholders = false, prefetchDistance = 1),
+            remoteMediator = mediator,
+            pagingSourceFactory = {
+                AnchoredMoviePagingSource(movieDao.searchPagingSource(trimmedQuery, mediator?.remoteIds.orEmpty()))
+                    .also { activeSource = it }
+            },
         ).flow.map { data ->
             data.map { it.toDomain() }
         }

@@ -10,7 +10,7 @@ application context. App supplies its singleton/DAO bindings through Koin. Futur
 released schema changes still require preserving migrations; the observer/factory
 leave the version-1 export unchanged.
 
-`catalog:data` depends on this module and maps validated popular-movie and top-level detail DTOs to local
+`catalog:data` depends on this module and maps validated popular/search movie and top-level detail DTOs to local
 records and committed reads to domain models. Database has no feature domain/data/presentation
 or networking dependency. Room runtime is exported for the public superclass;
 Paging common and coroutines core are exported for public `PagingSource` and `Flow`
@@ -69,8 +69,8 @@ Blank search input returns no rows, even if obsolete active IDs were supplied.
 The search factory binds user text and constructs its remote-ID clause exclusively
 from typed `Long` values. Numeric ID literals allow long sessions without exceeding
 older Android SQLite bind limits. Only committed movies are returned. The factory
-captures its query and IDs; data must create a new source/Pager when those inputs
-change. Room invalidates existing sources for relevant database writes, not for
+captures its query and IDs; data creates a new source when membership changes and a
+new Pager when the query changes. Room invalidates existing sources for relevant database writes, not for
 changes to external in-memory session lists.
 
 Online, an independently debounced API request validates and saves movies to Room
@@ -103,9 +103,22 @@ loads, remote refresh/append, and retry. A local load reaching the database end 
 request the next remote page immediately, including after initial refresh before
 scrolling. Local read load errors use Paging retry with safe storage feedback.
 
-The ViewModel caches one stream, projects load feedback, and emits Refresh/Retry
+Movie search now uses `OfflineFirstCatalogRepository.searchMovies(query, fetchRemote)`.
+The local-only mode constructs a Room Pager without HTTP work. The remote mode uses
+`MovieSearchRemoteMediator` and captures its immutable membership snapshot in each
+`searchPagingSource` factory call. Every successful commit publishes membership before
+explicit source invalidation, including duplicate-only and null-only batches. Refresh
+replaces membership; append extends it. Failed/canceled/superseded loads retain prior
+membership and cannot advance continuation. Canonical rows already committed before
+cancellation remain safe to reload.
+
+The ViewModel caches the current query's stream, projects load feedback, and emits Refresh/Retry
 commands to the active root. Active default-network reconnect triggers page-1 refresh
-without removing cache content; callbacks are released when the screen stops. Search and favorite domain operations/presentation remain integration work. Details now
+without removing cache content; callbacks are released when the screen stops. Presentation
+starts local reads immediately and switches to remote search after a configurable 350 ms
+quiet period. Query-owned scopes and generation tokens prevent abandoned requests or
+commands from affecting current content. Favorite domain operations/presentation remain
+integration work. Details now
 consume the existing `MovieDetailDao` observation and atomic-write operations through the same repository.
 
 ## Implemented detail consumer
@@ -121,14 +134,15 @@ The detail mapper validates requested identity, uses one injected-clock timestam
 maps every selected summary/detail column. Null children are skipped; duplicate IDs retain
 last-occurrence order with unique contiguous positions. `upsertMovieDetail` replaces all
 owned metadata before completion is reported. Detail nulls/empty lists clear old values;
-popular writes later update only shared summary fields. Favorites remain independent.
+popular/search writes later update only shared summary fields. Favorites remain independent.
 Data narrowly maps SQLite observation errors and reuses the existing safe write boundary. Cancellation
 and defects propagate; network work stays outside the existing transaction.
 
 No DAO, entity, SQL, index, foreign key, version, or export changed for details. Identity
 hash remains `e4403482a9eea406ad365cc39809fb7d`. See the root README and
-[`docs/verification/movie-details.md`](../../../docs/verification/movie-details.md) for
-JVM evidence, storage review, and separately recorded device checks.
+[`docs/verification/inline-movie-search.md`](../../../docs/verification/inline-movie-search.md)
+for JVM evidence and separate device checks, including detail/favorite preservation
+through search and subsequent Home writes.
 
 ## Integration handoff
 
@@ -146,8 +160,8 @@ failure. End on empty raw results, reported last page, or accessible page 500;
 reject mismatched page metadata. Local match/catalog/new-row counts do not decide end.
 
 All movie callers use `en-US`; search uses `include_adult=false`. Local matches do
-not wait for remote debounce. The implemented movie list refreshes the active catalog on reconnect while content
-remains visible. Search will follow the same active-query policy when implemented.
+not wait for remote debounce. The movie list refreshes the active catalog or settled
+movie query on reconnect while content remains visible; reconnect does not bypass debounce.
 Reconnect does not synchronize historical queries. There is
 no one-hour result-set freshness policy. Details always fetch on a new entry and active reconnect while displaying stored content.
 The injected clock records commit timestamps.

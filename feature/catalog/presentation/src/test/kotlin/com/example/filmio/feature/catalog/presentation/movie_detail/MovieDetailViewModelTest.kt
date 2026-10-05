@@ -229,6 +229,7 @@ class MovieDetailViewModelTest {
 }
 
 private class DetailRepositoryFake : CatalogRepository {
+    override fun searchMovies(query: String, fetchRemote: Boolean): Flow<PagingData<Movie>> = error("Unused")
     val local = MutableStateFlow<Result<Movie?, DataError.Local>>(Result.Success(null))
     val requests = mutableListOf<Long>()
     var fetch: suspend (Long) -> EmptyResult<DataError> = { _ -> Result.Success(Unit) }

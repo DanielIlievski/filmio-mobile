@@ -8,9 +8,8 @@ internal class MovieListLoadStateProjector {
     private var sawRemoteRefreshLoading = false
     private var remoteRefreshSucceeded = false
 
-    fun project(loads: CombinedLoadStates, hasItems: Boolean): MovieListState {
+    fun recordLoadStates(loads: CombinedLoadStates) {
         val remote = loads.mediator
-
         when (remote?.refresh) {
             is LoadState.Loading -> sawRemoteRefreshLoading = true
             is LoadState.Error -> {
@@ -28,7 +27,11 @@ internal class MovieListLoadStateProjector {
 
             null -> Unit
         }
+    }
 
+    /** Read-only state projection, safe to reevaluate inside MutableStateFlow.update. */
+    fun project(loads: CombinedLoadStates, hasItems: Boolean, current: MovieListState): MovieListState {
+        val remote = loads.mediator
         val refreshLoading = loads.source.refresh is LoadState.Loading || remote?.refresh is LoadState.Loading
         val appendLoading = loads.source.append is LoadState.Loading || remote?.append is LoadState.Loading
         val appendFailure = (loads.source.append as? LoadState.Error) ?: (remote?.append as? LoadState.Error)
@@ -38,11 +41,17 @@ internal class MovieListLoadStateProjector {
             ?: appendFailure.takeUnless { hasItems }
         val settled = loads.source.refresh is LoadState.NotLoading && remote?.refresh is LoadState.NotLoading
 
-        return MovieListState(
-            isInitialLoading = !hasItems && refreshFailure == null && (refreshLoading || !remoteRefreshSucceeded),
+        val search = current.isSearchActive
+        val localSettled = loads.source.refresh is LoadState.NotLoading
+        val searchExhausted = remoteRefreshSucceeded && remote?.append?.endOfPaginationReached == true
+        val noCachedMatches = search && current.isOffline && !hasItems && localSettled &&
+            loads.source.refresh !is LoadState.Error && loads.source.prepend !is LoadState.Error && loads.source.append !is LoadState.Error
+        return current.copy(
+            hasNoCachedMatches = noCachedMatches,
+            isInitialLoading = !hasItems && refreshFailure == null && (!noCachedMatches && (refreshLoading || !remoteRefreshSucceeded || (search && !searchExhausted))),
             isRefreshing = refreshLoading,
             isAppending = hasItems && appendLoading,
-            isEmpty = !hasItems && settled && remoteRefreshSucceeded && refreshFailure == null && !appendLoading,
+            isEmpty = !noCachedMatches && !hasItems && settled && remoteRefreshSucceeded && refreshFailure == null && !appendLoading && (!search || searchExhausted),
             refreshError = refreshFailure?.error?.toPagingUiText(),
             appendError = appendFailure?.error?.toPagingUiText().takeIf { hasItems },
         )
